@@ -116,7 +116,7 @@ Example: a RAG feature in V1 would go in `src/medic_agent/rag/`.
 - [ ] App sends query to selected model via LiteLLM
 - [ ] Response is displayed in the web UI
 - [ ] API key is loaded from .env, never hardcoded
-- [ ] App runs locally with a single command: `streamlit run app.py`
+- [ ] App runs locally with a single command: `uv run streamlit run src/medic_agent/ui/app.py`
 
 ---
 
