@@ -1,10 +1,7 @@
-import os
-
-from dotenv import load_dotenv
 from litellm import completion
-from litellm.exceptions import AuthenticationError, RateLimitError, APIConnectionError, BadRequestError
+from litellm.exceptions import AuthenticationError, BadRequestError, APIConnectionError, RateLimitError
 
-load_dotenv()
+from medic_agent.config.settings import DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT
 
 
 def ask(model_id: str, system_prompt: str, user_query: str) -> str:
@@ -31,8 +28,8 @@ def ask(model_id: str, system_prompt: str, user_query: str) -> str:
 
 if __name__ == "__main__":
     result = ask(
-        model_id="claude-haiku-4-5-20251001",
-        system_prompt="You are a knowledgeable healthcare assistant.",
+        model_id=DEFAULT_MODEL_ID,
+        system_prompt=DEFAULT_SYSTEM_PROMPT,
         user_query="What is the difference between Type 1 and Type 2 diabetes?",
     )
     print(result)
