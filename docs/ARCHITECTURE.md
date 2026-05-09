@@ -145,8 +145,8 @@ The architecture is designed to be extended in V1 with a context/RAG layer witho
 
 | Display Name | LiteLLM Model ID | Use Case |
 |---|---|---|
-| Claude Haiku (Fast) | `claude-haiku-4-5-20251001` | Quick lookups, low cost |
-| Claude Sonnet (Balanced) | `claude-sonnet-4-6` | Default — best balance |
+| Claude Haiku (Fast) | `claude-haiku-4-5-20251001` | **Default** — fast, low cost |
+| Claude Sonnet (Balanced) | `claude-sonnet-4-6` | Higher quality when needed |
 | Claude Opus (Powerful) | `claude-opus-4-6` | Complex clinical reasoning |
 
 ---
