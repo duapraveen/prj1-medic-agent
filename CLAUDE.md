@@ -129,3 +129,4 @@ Example: a RAG feature in V1 would go in `src/medic_agent/rag/`.
 | 2026-05-09 | FastAPI approved | Approved for HTTP API layer when needed; not Flask |
 | 2026-05-09 | Use uv over pip | Modern standard, faster, better env isolation |
 | 2026-05-09 | No LangChain | Adds abstraction before fundamentals are understood |
+| 2026-05-09 | Prompt caching enabled | cache_control on system prompt + future doc context; isolated to _build_messages() in llm/client.py |

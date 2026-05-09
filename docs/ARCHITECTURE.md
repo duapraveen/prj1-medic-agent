@@ -172,7 +172,28 @@ You do not provide diagnoses."
 
 ---
 
-## 8. Error Handling Strategy
+## 8. Prompt Caching Strategy
+
+Anthropic prompt caching is enabled on all requests via `cache_control: {"type": "ephemeral"}` markers in the message content blocks. Cached content is reused for 5 minutes at ~10% of the normal token cost.
+
+| Content Block | Cached? | Notes |
+|---|---|---|
+| System prompt | Yes | Marked in `_build_messages()` in `llm/client.py` |
+| Retrieved documents (V1) | Yes | Will be injected as a second marked block in the same helper |
+| User query | No | Changes every request — never cached |
+
+**Minimum token threshold for caching:**
+- Claude Haiku: 2048 tokens
+- Claude Sonnet / Opus: 1024 tokens
+
+The V0 system prompt (~60 tokens) falls below the threshold and won't cache in practice.
+V1 document context will comfortably exceed it.
+
+All caching logic is isolated to `_build_messages()` in `llm/client.py`. The UI and config layers are unaware of it.
+
+---
+
+## 9. Error Handling Strategy
 
 | Error Type | Handling |
 |---|---|

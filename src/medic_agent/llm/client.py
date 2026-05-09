@@ -4,14 +4,31 @@ from litellm.exceptions import AuthenticationError, BadRequestError, APIConnecti
 from medic_agent.config.settings import DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT
 
 
+def _build_messages(system_prompt: str, user_query: str) -> list[dict]:
+    # cache_control marks content for Anthropic prompt caching (5-min ephemeral cache).
+    # LiteLLM passes it through to Anthropic and ignores it for other providers.
+    # Minimum cacheable tokens: 2048 (Haiku), 1024 (Sonnet/Opus).
+    # V1: add a third content block here for retrieved document context (also marked for caching).
+    return [
+        {
+            "role": "system",
+            "content": [
+                {
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        },
+        {"role": "user", "content": user_query},
+    ]
+
+
 def ask(model_id: str, system_prompt: str, user_query: str) -> str:
     if not user_query.strip():
         raise ValueError("Query cannot be empty")
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_query},
-    ]
+    messages = _build_messages(system_prompt, user_query)
 
     try:
         response = completion(model=model_id, messages=messages)
