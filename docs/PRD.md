@@ -158,7 +158,18 @@ DOCUMENTATION FLAGS
 
 ## 5. User Experience — V1
 
-### Layout
+### App Layout — Three Tabs
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  🤖 Agent  │  📊 Observability  │  🧪 Evaluation                │
+├──────────────────────────────────────────────────────────────────┤
+```
+
+---
+
+### Tab 1 — Agent
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  SIDEBAR                    │  MAIN AREA                    │
@@ -173,16 +184,95 @@ DOCUMENTATION FLAGS
 │  • encounter_note.pdf  [x]  │  RESPONSE                     │
 │  • guidelines_2024.pdf [x]  │  (SOAP note or code list)     │
 │                             │                               │
-│                             │  SOURCES                      │
-│                             │  • encounter_note.pdf, p.2    │
-│                             │  • guidelines_2024.pdf, p.14  │
+│                             │  SOURCES USED                 │
+│                             │  • encounter_note.pdf §3      │
+│                             │  • guidelines_2024.pdf §7     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Use Case Selector Behavior
-- **Medical Coding**: default query pre-filled as "What are the appropriate codes for this encounter?" — user can override
+**Use Case Selector Behavior:**
+- **Medical Coding**: query pre-filled with "What are the appropriate codes for this encounter?"
 - **Ambient Note Taking**: input label changes to "Paste encounter transcript here"
-- System prompt switches automatically based on selection
+- System prompt switches automatically; prompt version logged to LangFuse
+
+---
+
+### Tab 2 — Observability
+
+**Purpose:** Visibility into every query session — inputs, outputs, retrieved context, latency, cost. Auditability record.
+
+**How to use:** This tab is passive — just open it. Every query you run in Tab 1 automatically appears here. No user action required.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  SUMMARY BAR                                                 │
+│  Sessions: 42  │  Avg latency: 3.2s  │  Avg cost: $0.003    │
+│  Errors: 1     │  Most used: Coding  │  Tokens today: 84k   │
+├──────────────────────────────────────────────────────────────┤
+│  FILTERS                                                     │
+│  Use case: [All ▼]   Date: [Last 7 days ▼]                  │
+├──────────────────────────────────────────────────────────────┤
+│  SESSION LOG TABLE                                           │
+│  Time       │ Use Case │ Model  │ Query (preview) │ ms │ err │
+│  05-10 14:32│ Coding   │ Haiku  │ "What codes..." │1842│     │
+│  05-10 14:28│ Ambient  │ Sonnet │ "Doctor: Good.."│3210│     │
+│  ▼ [expand row for full detail]                              │
+├──────────────────────────────────────────────────────────────┤
+│  [📤 Export CSV]          [🔗 Open in LangFuse →]           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Session detail (expandable row):**
+- Full query text
+- Full response text
+- Retrieved chunks with similarity scores
+- System prompt version used
+- Token breakdown (prompt / completion / cached)
+
+**"Open in LangFuse" button** → opens the user's LangFuse project in a browser tab, where waterfall traces and full token-level inspection are available.
+
+---
+
+### Tab 3 — Evaluation
+
+**Purpose:** Assess quality of the AI pipeline. Run after any significant change (prompt, model, chunking, retrieval k).
+
+**How to use:** Select which layers to run → click "Run Evaluation" → wait for results → optionally set as baseline.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  GOLDEN DATASET  (5 cases: 3 coding, 2 SOAP)                 │
+│  ☑ coding_001  T2DM + HTN + CKD quarterly visit              │
+│  ☑ coding_002  COPD acute exacerbation                       │
+│  ☑ coding_003  Acute MI sparse documentation                 │
+│  ☑ soap_001    Hypertension follow-up transcript             │
+│  ☑ soap_002    Costochondritis — fabrication stress test     │
+├──────────────────────────────────────────────────────────────┤
+│  LAYERS TO RUN                                               │
+│  ☑ Layer 1: Deterministic  (~2s, free)                       │
+│  ☑ Layer 2: RAGAS           (~3 min, small LLM cost)         │
+│  ☑ Layer 3: LLM-as-Judge    (~5 min, Sonnet cost ~$0.05)     │
+│                                                              │
+│  [▶ Run Evaluation]  [📌 Set as Baseline]                    │
+├──────────────────────────────────────────────────────────────┤
+│  RESULTS                             vs Baseline             │
+│  Case        │ L1  │ Faithful │ Judge │ Δ Judge             │
+│  coding_001  │ ✅  │  0.91    │  4.2  │ +0.3 ✅             │
+│  coding_002  │ ✅  │  0.87    │  3.8  │ -0.2 ⚠️             │
+│  coding_003  │ ✅  │  0.93    │  4.5  │ +0.1 ✅             │
+│  soap_001    │ ✅  │  0.89    │  4.1  │  0.0 —              │
+│  soap_002    │ ❌  │  0.72    │  3.3  │ -0.5 🔴             │
+├──────────────────────────────────────────────────────────────┤
+│  SCORE HISTORY (chart — scores over time)                    │
+│  [📤 Export Results]   [🔗 View in LangFuse →]              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**When to run evaluation:**
+- After changing a system prompt → "did this improve coding accuracy?"
+- After switching models (Haiku → Sonnet) → "is the quality gain worth the cost?"
+- After changing chunk size or retrieval k → "did retrieval quality improve?"
+- As a pre-commit regression check before significant changes
 
 ---
 
@@ -232,3 +322,4 @@ DOCUMENTATION FLAGS
 |---|---|---|
 | 0.1 | 2026-05-09 | Initial scaffold |
 | 0.2 | 2026-05-09 | Specialized to medical coding + ambient note taking use cases |
+| 0.3 | 2026-05-10 | Three-tab UX: Agent, Observability, Evaluation |

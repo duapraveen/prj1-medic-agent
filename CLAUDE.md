@@ -67,6 +67,9 @@ prj1-medic-agent/
 │       ├── observability/     ← tracing + LangFuse integration
 │       │   ├── __init__.py
 │       │   └── tracer.py      ← Session dataclass, JSON log, LangFuse spans
+│       ├── evaluation/        ← eval engine (called by UI Tab 3 AND pytest)
+│       │   ├── __init__.py
+│       │   └── runner.py      ← EvalRunner: run_layer1/2/3/all(); EvalResult dataclass
 │       └── rag/               ← RAG pipeline (V1)
 │           ├── __init__.py
 │           ├── ingestor.py    ← file loading + chunking
@@ -88,9 +91,12 @@ prj1-medic-agent/
 │   │   └── test_retriever.py
 │   ├── observability/
 │   │   └── test_tracer.py
+│   ├── observability/
+│   │   └── test_tracer.py
 │   └── eval/
 │       ├── golden_cases.json  ← synthetic test cases with expected outputs
-│       └── test_eval.py       ← three-layer eval runner
+│       ├── baseline.json      ← locked baseline scores (set after first good run)
+│       └── test_eval.py       ← pytest wrapper calling evaluation/runner.py
 ├── .env                       ← secrets (never commit this)
 ├── .env.example               ← template for .env (safe to commit)
 ├── .gitignore
@@ -165,10 +171,15 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 - [ ] Context injection uses prompt caching (cache_control: ephemeral)
 - [ ] All new modules have unit tests with mocked external calls
 - [ ] HUGGINGFACE_API_KEY and LANGFUSE keys loaded from .env, never hardcoded
+- [ ] App has three tabs: Agent, Observability, Evaluation
+- [ ] Tab 2 reads data/sessions/ and renders session log table + summary stats
+- [ ] Tab 2 has "Open in LangFuse" button linking to cloud dashboard
+- [ ] Tab 3 renders golden cases, layer selector, Run button, results table, baseline delta
 - [ ] Each query produces a LangFuse trace with retrieval span + LLM span
 - [ ] Session logs written to data/sessions/ as JSON lines
+- [ ] EvalRunner callable from both Tab 3 UI and pytest
 - [ ] Eval golden dataset (5 cases) passes Layer 1 deterministic checks
-- [ ] Baseline LLM-as-judge scores recorded in LangFuse
+- [ ] Baseline scores set and stored in tests/eval/baseline.json after first passing run
 
 ---
 
@@ -191,3 +202,5 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 | 2026-05-10 | LangFuse over Arize Phoenix | Cloud acceptable (no real patient data); LangFuse adds prompt versioning + integrated eval |
 | 2026-05-10 | Three-layer eval: deterministic + RAGAS + LLM-as-judge | Codes are right/wrong (deterministic); RAG quality needs RAGAS; overall quality needs LLM judge |
 | 2026-05-10 | Judge model: Claude Sonnet judges Claude Haiku | Judge must be smarter than the system being evaluated |
+| 2026-05-10 | Three-tab Streamlit UI | Obs and Eval surfaced in-app; no external dashboard required for routine use |
+| 2026-05-10 | EvalRunner in src/ not only in tests/ | UI (Tab 3) and pytest must share the same eval logic; runner.py is the single entry point |

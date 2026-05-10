@@ -404,6 +404,61 @@ This enables: "did changing the coding prompt from v2 → v3 improve scores?"
 - Scores written back to LangFuse as evaluation traces
 - Baseline scores locked after V1 → regression detected automatically
 
+### Evaluation Runner Architecture
+
+The eval logic lives in `src/medic_agent/evaluation/runner.py` — a callable Python module, NOT only in pytest. This allows both the Streamlit UI (Tab 3) and `pytest` to invoke the same evaluation logic.
+
+```
+src/medic_agent/evaluation/
+├── __init__.py
+└── runner.py          ← EvalRunner class: run_layer1(), run_layer2(), run_layer3(), run_all()
+                          Returns: EvalResult dataclass with scores per case per layer
+
+tests/eval/
+├── golden_cases.json  ← ground truth
+└── test_eval.py       ← pytest wrapper: calls runner.py, asserts no regressions vs baseline
+```
+
+`EvalRunner.run_all(cases, layers)` is the single entry point called by both UI and pytest.
+
+---
+
+### User Workflow — Observability
+
+```
+[User submits query in Tab 1]
+        ↓ automatic
+[tracer.py captures session]
+        ├── writes JSON line to data/sessions/YYYY-MM-DD.jsonl
+        └── sends trace to LangFuse (retrieval span + LLM span)
+        ↓
+[User opens Tab 2]
+        ├── reads data/sessions/ → renders session table + summary stats
+        └── "Open in LangFuse" → browser link to cloud dashboard
+```
+
+### User Workflow — Evaluation
+
+```
+[User opens Tab 3]
+        ↓
+[Selects cases + layers]
+        ↓
+[Clicks "Run Evaluation"]
+        ↓
+[EvalRunner.run_all() executes]
+        ├── Layer 1: regex checks, section presence (~2s)
+        ├── Layer 2: RAGAS pipeline against live RAG (~3 min)
+        └── Layer 3: Claude Sonnet judges each case (~5 min)
+        ↓
+[Results rendered in Tab 3 table]
+        ├── scores written to LangFuse as eval traces
+        └── delta vs baseline highlighted (green/amber/red)
+        ↓
+[User clicks "Set as Baseline" after a good run]
+        └── baseline.json written to tests/eval/
+```
+
 ---
 
 ## 11. Revision History
@@ -414,3 +469,4 @@ This enables: "did changing the coding prompt from v2 → v3 improve scores?"
 | 0.2 | 2026-05-09 | src/ structure, FastAPI approved, file paths updated |
 | 0.3 | 2026-05-09 | V1 RAG layer: decisions locked, diagrams updated, components added |
 | 0.4 | 2026-05-09 | Specialized to coding + ambient; SapBERT replaces OpenAI embeddings; two system prompts added |
+| 0.5 | 2026-05-10 | Three-tab UI design; evaluation runner architecture; user workflows for obs+eval |

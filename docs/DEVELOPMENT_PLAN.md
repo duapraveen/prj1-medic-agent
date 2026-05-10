@@ -139,14 +139,38 @@ Phase 3 (V3): Production-Ready ← Future
 - [ ] Verify: submit a query → check LangFuse dashboard → see trace with retrieval + LLM spans
 
 ### Step 1.8 — Update Streamlit UI (`ui/app.py`)
-- [ ] Add sidebar: use case selector (Medical Coding / Ambient Note Taking)
-- [ ] Use case selector drives system prompt and input label/placeholder
-- [ ] Add sidebar: file uploader (PDF + TXT), document list with delete buttons
+
+Restructure into three tabs: `st.tabs(["🤖 Agent", "📊 Observability", "🧪 Evaluation"])`
+
+**Tab 1 — Agent:**
+- [ ] Sidebar: use case selector (Medical Coding / Ambient Note Taking)
+- [ ] Sidebar: file uploader (PDF + TXT), document list with delete buttons
+- [ ] Use case selector drives system prompt, input label, and default query text
 - [ ] On upload: ingest → embed → store pipeline; show success/duplicate/error message
-- [ ] On query: retrieve top-5 chunks → inject context → call `ask()` with selected system prompt
-- [ ] Show source citations below response
-- [ ] Verify: upload encounter doc → select "Medical Coding" → submit → get coded output with citations
-- [ ] Verify: paste transcript → select "Ambient Note Taking" → submit → get SOAP note + codes
+- [ ] On query: retrieve top-5 → inject context → call `ask()` → display response + citations
+- [ ] Verify: full coding flow and full ambient flow work end-to-end
+
+**Tab 2 — Observability:**
+- [ ] Read `data/sessions/` JSONL files into a DataFrame
+- [ ] Render summary stats bar: total sessions, avg latency, avg cost, error count
+- [ ] Render session log table with filters (use case, date range)
+- [ ] Expandable row: full query, response, retrieved chunks, prompt version, token breakdown
+- [ ] "Export CSV" button
+- [ ] "Open in LangFuse" button → `st.link_button()` to user's LangFuse project URL (from config)
+- [ ] Verify: run 3 queries in Tab 1 → Tab 2 shows all 3 with correct metadata
+
+**Tab 3 — Evaluation:**
+- [ ] Render golden cases table with checkboxes (select which cases to run)
+- [ ] Layer selector checkboxes: Layer 1 (free), Layer 2 (RAGAS), Layer 3 (LLM-as-judge)
+- [ ] Show estimated time and cost warning before running Layer 2/3
+- [ ] "Run Evaluation" button → calls `EvalRunner.run_all()` with spinner
+- [ ] Results table: case ID, L1 pass/fail, RAGAS faithfulness, judge overall score
+- [ ] Delta column vs baseline (green/amber/red)
+- [ ] "Set as Baseline" button → writes scores to `tests/eval/baseline.json`
+- [ ] Score history chart (scores over time, keyed by timestamp)
+- [ ] "Export Results" button
+- [ ] "Open in LangFuse" → eval traces in cloud dashboard
+- [ ] Verify: run Layer 1 only → all 5 cases show results instantly
 
 ### Step 1.9 — Unit Tests
 - [ ] `tests/rag/test_ingestor.py`: chunk count, overlap, metadata fields
@@ -156,16 +180,22 @@ Phase 3 (V3): Production-Ready ← Future
 - [ ] `tests/observability/test_tracer.py`: mocked LangFuse, verify session fields captured
 - [ ] All tests pass with `uv run pytest`
 
-### Step 1.10 — Evaluation Golden Dataset + LLM-as-Judge
-- [ ] Golden dataset lives at `tests/eval/golden_cases.json` (already created — see below)
+### Step 1.10 — Evaluation Runner + Tests
+- [ ] Create `src/medic_agent/evaluation/__init__.py`
+- [ ] Create `src/medic_agent/evaluation/runner.py`:
+  - `EvalResult` dataclass: `{case_id, layer1_pass, ragas_scores, judge_scores, timestamp}`
+  - `run_layer1(case) -> dict` — deterministic checks (ICD-10 regex, CPT format, SOAP sections)
+  - `run_layer2(case, retrieved_chunks) -> dict` — RAGAS faithfulness + context precision
+  - `run_layer3(case, response) -> dict` — Claude Sonnet judges on rubric, returns JSON scores
+  - `run_all(cases, layers) -> list[EvalResult]` — called by both UI and pytest
+  - Scores written to LangFuse as evaluation traces
 - [ ] Create `tests/eval/test_eval.py`:
-  - Layer 1 (deterministic): ICD-10 format regex, CPT format, SOAP section presence
-  - Layer 2 (RAGAS): faithfulness, context precision, answer relevancy — run against RAG pipeline
-  - Layer 3 (LLM-as-judge): Claude Sonnet judges Haiku output on structured rubric (1–5 per dimension)
-  - Judge model: `claude-sonnet-4-6` (smarter than the system being judged)
-- [ ] Scores written back to LangFuse as evaluation traces
-- [ ] Run: `uv run pytest tests/eval/ -v` produces a score report
-- [ ] Baseline scores recorded — this is the regression benchmark
+  - Loads `golden_cases.json`
+  - Calls `EvalRunner.run_all()` 
+  - Asserts Layer 1 passes for all cases
+  - Asserts no judge score regresses >0.5 vs `baseline.json` (if baseline exists)
+- [ ] Run `uv run pytest tests/eval/ -v -m eval` — separate pytest mark so it doesn't run with unit tests
+- [ ] After first passing run: click "Set as Baseline" in Tab 3 → `baseline.json` created
 
 **V1 Complete when:** All items above are checked off.
 
@@ -224,3 +254,4 @@ Phase 3 (V3): Production-Ready ← Future
 | 0.2 | 2026-05-09 | Updated file paths to src/medic_agent/ structure |
 | 0.3 | 2026-05-09 | V1 Phase 1 fleshed out with concrete steps |
 | 0.4 | 2026-05-09 | Specialized to coding + ambient; SapBERT replaces OpenAI embeddings; use case selector added to Step 1.7 |
+| 0.5 | 2026-05-10 | Three-tab UI in Step 1.8; EvalRunner module in Step 1.10; user workflows documented |
