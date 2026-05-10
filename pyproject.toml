@@ -29,3 +29,10 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/medic_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not eval'"
+markers = [
+    "eval: integration eval tests that make real LLM calls (run with -m eval)",
+]
