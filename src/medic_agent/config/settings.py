@@ -24,6 +24,7 @@ if not HUGGINGFACE_API_KEY:
 
 LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+LANGFUSE_BASE_URL = os.getenv("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
 if not LANGFUSE_PUBLIC_KEY or not LANGFUSE_SECRET_KEY:
     warnings.warn(
         "LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY not set. "
