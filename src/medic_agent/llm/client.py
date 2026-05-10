@@ -1,7 +1,10 @@
+import time
+
 from litellm import completion
 from litellm.exceptions import AuthenticationError, BadRequestError, APIConnectionError, RateLimitError
 
 from medic_agent.config.settings import DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT
+from medic_agent.observability.tracer import Session, log_session
 
 
 def _format_context(chunks: list[dict]) -> str:
@@ -46,23 +49,49 @@ def ask(
     system_prompt: str,
     user_query: str,
     context: list[dict] | None = None,
+    session: Session | None = None,
 ) -> str:
     if not user_query.strip():
         raise ValueError("Query cannot be empty")
 
     messages = _build_messages(system_prompt, user_query, context)
+    start = time.monotonic()
+    result: str | None = None
+    error_msg: str | None = None
 
     try:
         response = completion(model=model_id, messages=messages)
-        return response.choices[0].message.content
+        result = response.choices[0].message.content
+        if session is not None:
+            session.response = result
+            try:
+                usage = response.usage
+                session.token_usage = {
+                    "prompt_tokens": usage.prompt_tokens,
+                    "completion_tokens": usage.completion_tokens,
+                    "total_tokens": usage.total_tokens,
+                }
+            except Exception:
+                pass
     except AuthenticationError:
+        error_msg = "Invalid API key"
         raise RuntimeError("Invalid API key. Check your .env file.")
     except RateLimitError:
+        error_msg = "Rate limit hit"
         raise RuntimeError("Rate limit hit. Wait a moment and try again.")
     except APIConnectionError:
+        error_msg = "Connection error"
         raise RuntimeError("Could not connect to the API. Check your internet connection.")
     except BadRequestError as e:
+        error_msg = str(e)
         raise RuntimeError(f"API rejected the request: {e}")
+    finally:
+        if session is not None:
+            session.latency_ms = round((time.monotonic() - start) * 1000, 1)
+            session.error = error_msg
+            log_session(session)
+
+    return result
 
 
 if __name__ == "__main__":
