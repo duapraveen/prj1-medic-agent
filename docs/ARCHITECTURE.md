@@ -1,7 +1,7 @@
 # Architecture Document — medic-agent
 
-**Version:** 0.1  
-**Status:** Draft  
+**Version:** 0.2  
+**Status:** Active  
 **Last Updated:** 2026-05-09  
 
 ---
@@ -9,8 +9,8 @@
 ## 1. System Overview
 
 medic-agent is a locally-run healthcare AI assistant.
-In V0, it is a simple request-response loop: user query → LLM → displayed response.
-The architecture is designed to be extended in V1 with a context/RAG layer without rewriting the core.
+V0 was a simple request-response loop: user query → LLM → displayed response.
+V1 adds a RAG (Retrieval-Augmented Generation) layer: users upload documents once, and the agent grounds its answers in those documents on every subsequent query.
 
 ---
 
@@ -52,38 +52,55 @@ The architecture is designed to be extended in V1 with a context/RAG layer witho
 
 ---
 
-## 3. V1 Architecture — Planned Extension (RAG Layer)
+## 3. V1 Architecture — RAG Layer (Current)
+
+Two distinct flows: **upload** (document ingestion) and **query** (retrieval + generation).
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│                     Streamlit Web UI                      │
-│  + Document upload widget                                 │
-│  + Source citation display                                │
-└─────────────────────┬────────────────────────────────────┘
-                      │
-         ┌────────────┴────────────┐
-         ▼                         ▼
-┌─────────────────┐     ┌──────────────────────┐
-│  LLM Client     │     │  Context/RAG Layer    │
-│  (unchanged)    │     │  (new in V1)          │
-│                 │     │  - Document ingestion  │
-│                 │     │  - Chunking            │
-│                 │     │  - Embedding           │
-│                 │     │  - Vector search       │
-└────────┬────────┘     └──────────┬───────────┘
-         │                         │
-         └────────────┬────────────┘
-                      ▼
-              ┌───────────────┐
-              │  LiteLLM      │
-              └───────────────┘
-                      │
-              ┌───────┴──────────────────┐
-              ▼                           ▼
-     ┌─────────────┐          ┌──────────────────────┐
-     │ Claude API  │          │  Vector DB (local)    │
-     └─────────────┘          │  ChromaDB (planned)   │
-                              └──────────────────────┘
+UPLOAD FLOW
+──────────────────────────────────────────────────────────────
+User uploads file (PDF / TXT)
+        │
+        ▼
+┌───────────────────┐    ┌───────────────────┐    ┌──────────────────────┐
+│  rag/ingestor.py  │───►│  rag/embedder.py  │───►│  rag/store.py        │
+│  Parse file       │    │  OpenAI           │    │  ChromaDB            │
+│  Split into chunks│    │  text-embedding-  │    │  Persistent on disk  │
+│                   │    │  3-small          │    │  data/chroma/        │
+└───────────────────┘    └───────────────────┘    └──────────────────────┘
+
+QUERY FLOW
+──────────────────────────────────────────────────────────────
+User types query
+        │
+        ▼
+┌───────────────────┐    ┌──────────────────────┐
+│  rag/embedder.py  │───►│  rag/retriever.py    │
+│  Embed the query  │    │  Similarity search   │
+│                   │    │  Top-k chunks        │
+└───────────────────┘    └──────────┬───────────┘
+                                    │ context chunks
+                                    ▼
+                         ┌──────────────────────┐
+                         │  llm/client.py       │
+                         │  _build_messages():  │
+                         │  [system ⚡cached]   │
+                         │  [context ⚡cached]  │
+                         │  [user query]        │
+                         └──────────┬───────────┘
+                                    │
+                                    ▼
+                              ┌──────────┐
+                              │ LiteLLM  │
+                              └────┬─────┘
+                                   │
+                              ┌────▼─────┐
+                              │ Claude   │
+                              │ API      │
+                              └──────────┘
+                                   │
+                                   ▼
+                    Response + source citations shown in UI
 ```
 
 ---
@@ -102,20 +119,42 @@ The architecture is designed to be extended in V1 with a context/RAG layer witho
 - Isolates the rest of the app from LiteLLM specifics
 - Extended in V1 with context injection before the LLM call
 
-### 4.3 `src/medic_agent/api/routes.py` — FastAPI Layer (optional)
+### 4.3 `src/medic_agent/rag/ingestor.py` — Document Ingestion (V1)
+- Accepts PDF (bytes) or plain text (str), returns list of chunk dicts
+- Each chunk: `{text, source_filename, chunk_index}`
+- Chunking: 1000-character windows with 200-character overlap
+- Supported types: `.pdf`, `.txt`
+
+### 4.4 `src/medic_agent/rag/embedder.py` — Embedding (V1)
+- `embed_texts(texts) -> list[list[float]]` — batch embed for ingestion
+- `embed_query(query) -> list[float]` — single embed for retrieval
+- Model: OpenAI `text-embedding-3-small` (1536 dimensions)
+- API key: `OPENAI_API_KEY` from `.env`
+
+### 4.5 `src/medic_agent/rag/store.py` — Vector Store (V1)
+- Wraps ChromaDB `PersistentClient` pointed at `data/chroma/`
+- `add_document(doc_id, chunks, embeddings)` — stores chunks + vectors
+- `document_exists(doc_id)` — prevents duplicate ingestion
+- `list_documents()` — returns all stored document names
+- `delete_document(doc_id)` — removes document and its chunks
+
+### 4.6 `src/medic_agent/rag/retriever.py` — Retrieval (V1)
+- `retrieve(query, k=5) -> list[dict]` — returns top-k relevant chunks
+- Embeds the query, queries ChromaDB, returns chunks with metadata
+- Strategy: cosine similarity, top-5
+
+### 4.7 `src/medic_agent/api/routes.py` — FastAPI Layer (optional)
 - HTTP API layer for when a REST interface is needed
 - Thin layer: validates request, delegates to `llm.client`, returns response
-- Not required for V0 (Streamlit calls Python directly)
 
-### 4.4 `src/medic_agent/config/settings.py` — Configuration
-- Loads and validates environment variables on startup
-- Defines available models and their display names
-- Central place for all app settings
-- Raises clear errors if required config is missing
+### 4.8 `src/medic_agent/config/settings.py` — Configuration
+- Loads and validates all environment variables on startup
+- Defines available models, embedding model, ChromaDB path
+- Raises clear errors if required keys are missing
 
-### 4.5 `.env` — Secrets
-- `ANTHROPIC_API_KEY` — required for V0
-- `OPENAI_API_KEY` — optional, needed when GPT support is added
+### 4.9 `.env` — Secrets
+- `ANTHROPIC_API_KEY` — required (LLM calls)
+- `OPENAI_API_KEY` — required from V1 (embeddings)
 - Never committed to git
 
 ---
@@ -129,15 +168,18 @@ The architecture is designed to be extended in V1 with a context/RAG layer witho
 | LiteLLM | latest | LLM abstraction | One API for all providers; drop-in Claude→GPT switching; active project |
 | uv | latest | Package manager | 10-100x faster than pip; built-in virtual env management; modern standard |
 | python-dotenv | latest | Secret management | Industry standard for .env loading; simple |
-| pytest | latest | Testing | Standard Python test framework |
-
-| FastAPI | latest | API layer | Approved; use when an HTTP interface is needed alongside Streamlit |
+| FastAPI | latest | API layer | Approved for HTTP interface alongside Streamlit |
+| ChromaDB | latest | Vector database | Local, persistent, no server required; purpose-built for embeddings |
+| pypdf | latest | PDF parsing | Lightweight pure-Python PDF reader; no system dependencies |
+| openai | latest | Embeddings API | text-embedding-3-small: high quality, cheap ($0.02/M tokens), simple |
+| pytest + pytest-mock | latest | Testing | Standard Python test framework with mocking support |
 
 **Not used and why:**
-- **LangChain / LlamaIndex** — adds heavy abstraction before fundamentals are understood; will evaluate for V1 RAG layer
-- **Flask** — FastAPI is approved instead; Flask is excluded
-- **Docker** — unnecessary overhead for local V0
-- **SQLite / Postgres** — no persistence needed in V0
+- **LangChain / LlamaIndex** — we understand the RAG fundamentals now; still adding unnecessary abstraction for our use case
+- **Flask** — FastAPI approved instead
+- **Ollama / local embeddings** — API embeddings are cheaper per token and simpler to operate; revisit if offline requirement emerges
+- **Docker** — unnecessary overhead for local app
+- **Postgres / SQLite** — ChromaDB covers our persistence needs
 
 ---
 
@@ -205,7 +247,7 @@ All caching logic is isolated to `_build_messages()` in `llm/client.py`. The UI 
 
 ---
 
-## 9. Security Considerations
+## 10. Security Considerations
 
 - API keys loaded from `.env` only — never in source code
 - `.env` in `.gitignore` — never committed
@@ -215,17 +257,34 @@ All caching logic is isolated to `_build_messages()` in `llm/client.py`. The UI 
 
 ---
 
-## 10. V1 RAG Layer — Technical Notes (Future Reference)
+## 11. V1 RAG Layer — Decisions
 
-<!-- TODO: Flesh this out when V1 planning begins -->
+| Decision | Choice | Reason |
+|---|---|---|
+| Document types | PDF, plain text (.txt) | Most common in healthcare; FHIR JSON deferred to V2 |
+| Chunking | Recursive character split | Simple, effective; 1000 char window, 200 char overlap |
+| Embedding model | OpenAI text-embedding-3-small | 1536 dims, cheap, no local setup required |
+| Vector store | ChromaDB PersistentClient | Local, free, no server, persists to data/chroma/ |
+| Retrieval strategy | Cosine similarity, top-5 | Simple and effective; MMR deferred to V2 |
+| Storage model | Persistent — upload once, use always | Single user; re-upload is unnecessary friction |
+| Context injection | Second cached block in _build_messages() | Hook already in place in llm/client.py |
+| Duplicate prevention | document_exists() check before ingestion | Avoid re-embedding already stored files |
 
-**Planned components:**
-- **Document ingestion:** Accept PDF, plain text, FHIR JSON
-- **Chunking strategy:** [PLACEHOLDER — recursive character splitting vs. semantic chunking]
-- **Embedding model:** [PLACEHOLDER — local model (nomic-embed-text via Ollama) vs. API (OpenAI ada-002)]
-- **Vector store:** ChromaDB (local, free, no server needed)
-- **Retrieval strategy:** [PLACEHOLDER — top-k similarity vs. MMR]
-- **Context injection:** Retrieved chunks injected into system prompt before LLM call
+**Context block format injected into LLM:**
+```
+CONTEXT FROM DOCUMENTS:
+
+[Source: clinical_guidelines.pdf | Chunk 3]
+<chunk text>
+
+[Source: discharge_notes.txt | Chunk 1]
+<chunk text>
+...
+```
+
+**Prompt caching in V1:**
+Retrieved context is injected as a second `cache_control: ephemeral` block in `_build_messages()`.
+This means queries against the same retrieved context are served at ~10% token cost after the first call within 5 minutes.
 
 ---
 
@@ -235,3 +294,4 @@ All caching logic is isolated to `_build_messages()` in `llm/client.py`. The UI 
 |---|---|---|
 | 0.1 | 2026-05-09 | Initial scaffold |
 | 0.2 | 2026-05-09 | src/ structure, FastAPI approved, file paths updated |
+| 0.3 | 2026-05-09 | V1 RAG layer: decisions locked, diagrams updated, components added |

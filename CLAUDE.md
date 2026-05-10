@@ -12,7 +12,7 @@ NEVER deviate from these instructions without explicit user approval.
 It allows a user to submit natural language queries and receive answers from an LLM.
 The app is designed for healthcare contexts: clinical, administrative (RCM, scheduling, claims), and patient-facing use cases.
 
-**Current phase:** V0 — single-user, local web UI, Claude models only.
+**Current phase:** V1 — adding RAG layer: document ingestion, embedding, persistent vector store, retrieval-grounded responses.
 
 ---
 
@@ -26,9 +26,12 @@ The app is designed for healthcare contexts: clinical, administrative (RCM, sche
 | LLM Abstraction | LiteLLM | Unified interface for Claude, GPT, Gemini etc. |
 | Package Manager | uv | Modern, fast, replaces pip+venv |
 | Config / Secrets | python-dotenv + .env | Standard, safe, local |
+| Vector Database | ChromaDB (PersistentClient) | Local, no server, persists to data/chroma/ |
+| PDF Parsing | pypdf | Lightweight, pure Python, no system dependencies |
+| Embeddings | OpenAI text-embedding-3-small | Via OPENAI_API_KEY; 1536 dims, cheap |
 | Version Control | Git | Standard |
 
-Do NOT suggest or introduce Flask, LangChain, or other frameworks unless the user explicitly approves it.
+Do NOT suggest or introduce Flask, LangChain, LlamaIndex, or other frameworks unless the user explicitly approves it.
 
 ---
 
@@ -58,9 +61,22 @@ prj1-medic-agent/
 │       └── config/            ← configuration and settings
 │           ├── __init__.py
 │           └── settings.py
+│       └── rag/               ← RAG pipeline (V1)
+│           ├── __init__.py
+│           ├── ingestor.py    ← file loading + chunking
+│           ├── embedder.py    ← OpenAI embedding calls
+│           ├── store.py       ← ChromaDB persistence operations
+│           └── retriever.py   ← query → top-k relevant chunks
+├── data/
+│   └── chroma/                ← ChromaDB on-disk storage (gitignored)
 ├── tests/
-│   ├── test_llm_client.py
-│   └── test_api.py
+│   ├── llm/
+│   │   └── test_client.py
+│   └── rag/
+│       ├── test_ingestor.py
+│       ├── test_embedder.py
+│       ├── test_store.py
+│       └── test_retriever.py
 ├── .env                       ← secrets (never commit this)
 ├── .env.example               ← template for .env (safe to commit)
 ├── .gitignore
@@ -68,7 +84,6 @@ prj1-medic-agent/
 ```
 
 Each substantial new feature gets its own subfolder under `src/medic_agent/`.
-Example: a RAG feature in V1 would go in `src/medic_agent/rag/`.
 
 ---
 
@@ -100,23 +115,39 @@ Example: a RAG feature in V1 would go in `src/medic_agent/rag/`.
 
 ## What NOT to Do
 
-- Do NOT use LangChain or LlamaIndex in V0. These add complexity before we understand the fundamentals.
-- Do NOT add a database in V0. No SQLite, no Postgres, nothing persistent yet.
-- Do NOT build authentication in V0. Single user, local only.
-- Do NOT deploy to cloud in V0. Local MacBook only.
-- Do NOT add async/streaming in V0. Keep it synchronous for now.
+- Do NOT use LangChain or LlamaIndex. We build the RAG pipeline ourselves to understand the fundamentals.
+- Do NOT add user authentication. Single user, local only.
+- Do NOT deploy to cloud. Local MacBook only.
+- Do NOT add async/streaming. Keep it synchronous.
+- Do NOT use a relational database. ChromaDB covers all persistence needs.
+- Do NOT re-embed a document that already exists in the store — always check `document_exists()` first.
+- Do NOT make real API calls in tests. Mock all external calls (OpenAI, Anthropic, ChromaDB).
 - Do NOT create new files unless absolutely necessary.
 
 ---
 
-## Current V0 Acceptance Criteria
+## V0 Acceptance Criteria — COMPLETE ✅ (2026-05-09)
 
-- [ ] User can type a healthcare query in the web UI
-- [ ] User can select a Claude model (haiku / sonnet / opus)
-- [ ] App sends query to selected model via LiteLLM
-- [ ] Response is displayed in the web UI
-- [ ] API key is loaded from .env, never hardcoded
-- [ ] App runs locally with a single command: `uv run streamlit run src/medic_agent/ui/app.py`
+- [x] User can type a healthcare query in the web UI
+- [x] User can select a Claude model (haiku / sonnet / opus)
+- [x] App sends query to selected model via LiteLLM
+- [x] Response is displayed in the web UI
+- [x] API key is loaded from .env, never hardcoded
+- [x] App runs locally with: `uv run streamlit run src/medic_agent/ui/app.py`
+
+## Current V1 Acceptance Criteria
+
+- [ ] User can upload a PDF or TXT file via the sidebar
+- [ ] Uploaded documents are parsed, chunked, embedded, and stored in ChromaDB
+- [ ] Documents persist across app restarts — no re-upload needed
+- [ ] User can see the list of uploaded documents in the sidebar
+- [ ] User can delete a document from the store
+- [ ] Duplicate uploads are detected and skipped
+- [ ] On query, top-5 relevant chunks are retrieved and injected as context
+- [ ] Response cites which document(s) it drew from
+- [ ] Context injection uses prompt caching (cache_control: ephemeral)
+- [ ] All new modules have unit tests with mocked external calls
+- [ ] OPENAI_API_KEY loaded from .env, never hardcoded
 
 ---
 
@@ -130,3 +161,6 @@ Example: a RAG feature in V1 would go in `src/medic_agent/rag/`.
 | 2026-05-09 | Use uv over pip | Modern standard, faster, better env isolation |
 | 2026-05-09 | No LangChain | Adds abstraction before fundamentals are understood |
 | 2026-05-09 | Prompt caching enabled | cache_control on system prompt + future doc context; isolated to _build_messages() in llm/client.py |
+| 2026-05-09 | OpenAI embeddings over local | Simpler, no Ollama setup; text-embedding-3-small is cheap and high quality |
+| 2026-05-09 | ChromaDB persistent over in-memory | Single user; persist once, query always; stored at data/chroma/ |
+| 2026-05-09 | PDF + TXT for V1; FHIR JSON deferred | FHIR needs special extraction logic; keep V1 scope tight |
