@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 from litellm.exceptions import AuthenticationError, BadRequestError, APIConnectionError, RateLimitError
 
-from medic_agent.llm.client import ask
+from medic_agent.llm.client import ask, _format_context
 
 
 def _mock_response(content: str) -> MagicMock:
@@ -82,3 +82,54 @@ def test_ask_maps_bad_request_error(mocker):
     mocker.patch("medic_agent.llm.client.completion", side_effect=BadRequestError("bad", llm_provider="anthropic", model="claude-haiku-4-5-20251001"))
     with pytest.raises(RuntimeError, match="API rejected"):
         ask("claude-haiku-4-5-20251001", "You are helpful.", "What is aspirin?")
+
+
+# --- Context injection ---
+
+_CHUNKS = [
+    {"text": "Patient has hypertension.", "source_filename": "note.pdf", "chunk_index": 0},
+    {"text": "BP 148/92 mmHg.", "source_filename": "note.pdf", "chunk_index": 1},
+]
+
+
+def test_ask_without_context_has_one_system_block(mocker):
+    mock_completion = mocker.patch("medic_agent.llm.client.completion", return_value=_mock_response("ok"))
+    ask("claude-haiku-4-5-20251001", "Be concise.", "What is aspirin?")
+    system_msg = next(m for m in mock_completion.call_args.kwargs["messages"] if m["role"] == "system")
+    assert len(system_msg["content"]) == 1
+
+
+def test_ask_with_context_has_two_system_blocks(mocker):
+    mock_completion = mocker.patch("medic_agent.llm.client.completion", return_value=_mock_response("ok"))
+    ask("claude-haiku-4-5-20251001", "Be concise.", "Any codes?", context=_CHUNKS)
+    system_msg = next(m for m in mock_completion.call_args.kwargs["messages"] if m["role"] == "system")
+    assert len(system_msg["content"]) == 2
+
+
+def test_ask_context_block_has_cache_control(mocker):
+    mock_completion = mocker.patch("medic_agent.llm.client.completion", return_value=_mock_response("ok"))
+    ask("claude-haiku-4-5-20251001", "Be concise.", "Any codes?", context=_CHUNKS)
+    system_msg = next(m for m in mock_completion.call_args.kwargs["messages"] if m["role"] == "system")
+    assert system_msg["content"][1]["cache_control"] == {"type": "ephemeral"}
+
+
+def test_ask_context_block_contains_chunk_text(mocker):
+    mock_completion = mocker.patch("medic_agent.llm.client.completion", return_value=_mock_response("ok"))
+    ask("claude-haiku-4-5-20251001", "Be concise.", "Any codes?", context=_CHUNKS)
+    system_msg = next(m for m in mock_completion.call_args.kwargs["messages"] if m["role"] == "system")
+    context_text = system_msg["content"][1]["text"]
+    assert "Patient has hypertension." in context_text
+    assert "BP 148/92 mmHg." in context_text
+
+
+def test_format_context_includes_source_and_chunk_index():
+    result = _format_context(_CHUNKS)
+    assert "[Source: note.pdf | Chunk 0]" in result
+    assert "[Source: note.pdf | Chunk 1]" in result
+
+
+def test_ask_with_empty_context_has_one_system_block(mocker):
+    mock_completion = mocker.patch("medic_agent.llm.client.completion", return_value=_mock_response("ok"))
+    ask("claude-haiku-4-5-20251001", "Be concise.", "Any codes?", context=[])
+    system_msg = next(m for m in mock_completion.call_args.kwargs["messages"] if m["role"] == "system")
+    assert len(system_msg["content"]) == 1

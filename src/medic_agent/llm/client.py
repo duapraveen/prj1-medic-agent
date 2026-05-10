@@ -4,31 +4,53 @@ from litellm.exceptions import AuthenticationError, BadRequestError, APIConnecti
 from medic_agent.config.settings import DEFAULT_MODEL_ID, DEFAULT_SYSTEM_PROMPT
 
 
-def _build_messages(system_prompt: str, user_query: str) -> list[dict]:
+def _format_context(chunks: list[dict]) -> str:
+    parts = []
+    for chunk in chunks:
+        header = f"[Source: {chunk['source_filename']} | Chunk {chunk['chunk_index']}]"
+        parts.append(f"{header}\n{chunk['text']}")
+    return "\n\n".join(parts)
+
+
+def _build_messages(
+    system_prompt: str, user_query: str, context: list[dict] | None = None
+) -> list[dict]:
     # cache_control marks content for Anthropic prompt caching (5-min ephemeral cache).
     # LiteLLM passes it through to Anthropic and ignores it for other providers.
     # Minimum cacheable tokens: 2048 (Haiku), 1024 (Sonnet/Opus).
-    # V1: add a third content block here for retrieved document context (also marked for caching).
-    return [
+    system_content = [
         {
-            "role": "system",
-            "content": [
-                {
-                    "type": "text",
-                    "text": system_prompt,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-        },
+            "type": "text",
+            "text": system_prompt,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
+
+    if context:
+        system_content.append(
+            {
+                "type": "text",
+                "text": "RETRIEVED DOCUMENT CONTEXT\n\n" + _format_context(context),
+                "cache_control": {"type": "ephemeral"},
+            }
+        )
+
+    return [
+        {"role": "system", "content": system_content},
         {"role": "user", "content": user_query},
     ]
 
 
-def ask(model_id: str, system_prompt: str, user_query: str) -> str:
+def ask(
+    model_id: str,
+    system_prompt: str,
+    user_query: str,
+    context: list[dict] | None = None,
+) -> str:
     if not user_query.strip():
         raise ValueError("Query cannot be empty")
 
-    messages = _build_messages(system_prompt, user_query)
+    messages = _build_messages(system_prompt, user_query, context)
 
     try:
         response = completion(model=model_id, messages=messages)
