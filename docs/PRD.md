@@ -158,17 +158,19 @@ DOCUMENTATION FLAGS
 
 ## 5. User Experience — V1
 
-### App Layout — Three Tabs
+### App Layout — Four Tabs
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  🤖 Agent  │  📊 Observability  │  🧪 Evaluation                │
-├──────────────────────────────────────────────────────────────────┤
+┌──────────────────────────────────────────────────────────────────────────┐
+│  🤖 Agent  │  📚 Knowledge Base & Prompts  │  📊 Observability  │  🧪 Evaluation  │
+├──────────────────────────────────────────────────────────────────────────┤
 ```
 
 ---
 
 ### Tab 1 — Agent
+
+Document upload has moved to Tab 2. Sidebar is lean — use case selector and KB status only.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -178,11 +180,11 @@ DOCUMENTATION FLAGS
 │  ○ Medical Coding           │                               │
 │  ○ Ambient Note Taking      │  [Query / Transcript input]   │
 │                             │                               │
-│  Documents:                 │  [Submit button]              │
-│  [Upload PDF or TXT]        │                               │
-│  ─────────────              │  ─────────────────────────    │
-│  • encounter_note.pdf  [x]  │  RESPONSE                     │
-│  • guidelines_2024.pdf [x]  │  (SOAP note or code list)     │
+│  Knowledge Base:            │  [Submit button]              │
+│  📄 3 documents (42 chunks) │                               │
+│  → Manage in Tab 2          │  ─────────────────────────    │
+│                             │  RESPONSE                     │
+│                             │  (SOAP note or code list)     │
 │                             │                               │
 │                             │  SOURCES USED                 │
 │                             │  • encounter_note.pdf §3      │
@@ -193,11 +195,61 @@ DOCUMENTATION FLAGS
 **Use Case Selector Behavior:**
 - **Medical Coding**: query pre-filled with "What are the appropriate codes for this encounter?"
 - **Ambient Note Taking**: input label changes to "Paste encounter transcript here"
-- System prompt switches automatically; prompt version logged to LangFuse
+- System prompt switches automatically; active prompt version shown and logged to LangFuse
 
 ---
 
-### Tab 2 — Observability
+### Tab 2 — Knowledge Base & System Prompts
+
+**Purpose:** One place to manage all configuration — documents the agent reasons over, and the system prompts that control its behavior.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  KNOWLEDGE BASE                                              │
+│  ──────────────                                              │
+│  [📎 Upload PDF or TXT file]                                 │
+│                                                              │
+│  Document              Chunks   Uploaded        Action       │
+│  encounter_note.pdf      18     2026-05-10       [🗑 Delete] │
+│  guidelines_2024.pdf     31     2026-05-09       [🗑 Delete] │
+│  formulary_q2.txt         9     2026-05-09       [🗑 Delete] │
+│                                                              │
+│  Total: 3 documents, 58 chunks                               │
+├──────────────────────────────────────────────────────────────┤
+│  SYSTEM PROMPTS                                              │
+│  ──────────────                                              │
+│  Active prompt version: v3  (saved 2026-05-10 14:22)        │
+│                                                              │
+│  ┌─ Medical Coding Prompt ───────────────────────────────┐  │
+│  │ You are a certified medical coding specialist with    │  │
+│  │ expertise in ICD-10-CM, ICD-10-PCS, CPT, and HCPCS.. │  │
+│  │                                                       │  │
+│  │ [editable text area — full prompt visible]            │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  ┌─ Ambient Note Taking Prompt ──────────────────────────┐  │
+│  │ You are a clinical documentation specialist with      │  │
+│  │ expertise in SOAP note writing and medical coding...  │  │
+│  │                                                       │  │
+│  │ [editable text area — full prompt visible]            │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                              │
+│  [💾 Save Prompts]          [↩ Reset to Defaults]           │
+│                                                              │
+│  Save → writes to data/prompts.json + pushes new version    │
+│          to LangFuse (all future traces link to this version)│
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Prompt Save Behavior:**
+- Prompts are saved to `data/prompts.json` (persists across restarts)
+- A new version is pushed to LangFuse so every subsequent trace is linked to it
+- "Reset to Defaults" restores the factory prompts from `config/settings.py` (does not auto-save)
+- Active prompt version number displayed so you always know which version is live
+
+---
+
+### Tab 3 — Observability
 
 **Purpose:** Visibility into every query session — inputs, outputs, retrieved context, latency, cost. Auditability record.
 
@@ -233,7 +285,7 @@ DOCUMENTATION FLAGS
 
 ---
 
-### Tab 3 — Evaluation
+### Tab 4 — Evaluation
 
 **Purpose:** Assess quality of the AI pipeline. Run after any significant change (prompt, model, chunking, retrieval k).
 
@@ -323,3 +375,4 @@ DOCUMENTATION FLAGS
 | 0.1 | 2026-05-09 | Initial scaffold |
 | 0.2 | 2026-05-09 | Specialized to medical coding + ambient note taking use cases |
 | 0.3 | 2026-05-10 | Three-tab UX: Agent, Observability, Evaluation |
+| 0.4 | 2026-05-10 | Four-tab UX: added Knowledge Base & System Prompts tab; doc upload moved from sidebar |

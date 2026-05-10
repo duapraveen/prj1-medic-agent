@@ -80,7 +80,8 @@ prj1-medic-agent/
 │   └── chroma/                ← ChromaDB on-disk storage (gitignored)
 ├── data/
 │   ├── chroma/                ← ChromaDB on-disk storage (gitignored)
-│   └── sessions/              ← JSON session logs for auditability (gitignored)
+│   ├── sessions/              ← JSON session logs for auditability (gitignored)
+│   └── prompts.json           ← user-edited system prompts (gitignored — user-specific)
 ├── tests/
 │   ├── llm/
 │   │   └── test_client.py
@@ -171,10 +172,14 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 - [ ] Context injection uses prompt caching (cache_control: ephemeral)
 - [ ] All new modules have unit tests with mocked external calls
 - [ ] HUGGINGFACE_API_KEY and LANGFUSE keys loaded from .env, never hardcoded
-- [ ] App has three tabs: Agent, Observability, Evaluation
-- [ ] Tab 2 reads data/sessions/ and renders session log table + summary stats
-- [ ] Tab 2 has "Open in LangFuse" button linking to cloud dashboard
-- [ ] Tab 3 renders golden cases, layer selector, Run button, results table, baseline delta
+- [ ] App has four tabs: Agent, Knowledge Base & Prompts, Observability, Evaluation
+- [ ] Tab 2 (KB & Prompts): document upload, document list with chunk counts, delete
+- [ ] Tab 2: editable text areas for Coding and Ambient system prompts with labels
+- [ ] Tab 2: Save Prompts → writes data/prompts.json + pushes new version to LangFuse
+- [ ] Tab 2: Reset to Defaults → restores settings.py defaults into text areas (no auto-save)
+- [ ] Tab 3 reads data/sessions/ and renders session log table + summary stats
+- [ ] Tab 3 has "Open in LangFuse" button linking to cloud dashboard
+- [ ] Tab 4 renders golden cases, layer selector, Run button, results table, baseline delta
 - [ ] Each query produces a LangFuse trace with retrieval span + LLM span
 - [ ] Session logs written to data/sessions/ as JSON lines
 - [ ] EvalRunner callable from both Tab 3 UI and pytest
@@ -203,4 +208,7 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 | 2026-05-10 | Three-layer eval: deterministic + RAGAS + LLM-as-judge | Codes are right/wrong (deterministic); RAG quality needs RAGAS; overall quality needs LLM judge |
 | 2026-05-10 | Judge model: Claude Sonnet judges Claude Haiku | Judge must be smarter than the system being evaluated |
 | 2026-05-10 | Three-tab Streamlit UI | Obs and Eval surfaced in-app; no external dashboard required for routine use |
-| 2026-05-10 | EvalRunner in src/ not only in tests/ | UI (Tab 3) and pytest must share the same eval logic; runner.py is the single entry point |
+| 2026-05-10 | EvalRunner in src/ not only in tests/ | UI (Tab 4) and pytest must share the same eval logic; runner.py is the single entry point |
+| 2026-05-10 | Four-tab UI; KB & Prompts tab added | Separates configuration (Tab 2) from operation (Tab 1); doc upload moved out of sidebar |
+| 2026-05-10 | Prompts editable at runtime via Tab 2 | Two-layer persistence: data/prompts.json (local) + LangFuse versions (cloud history) |
+| 2026-05-10 | data/prompts.json gitignored | User prompt edits are personal config, not source code |

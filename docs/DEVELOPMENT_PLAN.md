@@ -140,36 +140,48 @@ Phase 3 (V3): Production-Ready ← Future
 
 ### Step 1.8 — Update Streamlit UI (`ui/app.py`)
 
-Restructure into three tabs: `st.tabs(["🤖 Agent", "📊 Observability", "🧪 Evaluation"])`
+Restructure into four tabs:
+`st.tabs(["🤖 Agent", "📚 Knowledge Base & Prompts", "📊 Observability", "🧪 Evaluation"])`
 
 **Tab 1 — Agent:**
-- [ ] Sidebar: use case selector (Medical Coding / Ambient Note Taking)
-- [ ] Sidebar: file uploader (PDF + TXT), document list with delete buttons
-- [ ] Use case selector drives system prompt, input label, and default query text
-- [ ] On upload: ingest → embed → store pipeline; show success/duplicate/error message
+- [ ] Sidebar: use case selector only (Medical Coding / Ambient Note Taking)
+- [ ] Sidebar: KB status summary — "📄 N documents (M chunks) → Manage in Tab 2"
+- [ ] Use case selector drives system prompt (loaded from `data/prompts.json`), input label, default query
 - [ ] On query: retrieve top-5 → inject context → call `ask()` → display response + citations
 - [ ] Verify: full coding flow and full ambient flow work end-to-end
 
-**Tab 2 — Observability:**
+**Tab 2 — Knowledge Base & System Prompts:**
+- [ ] *Section: Knowledge Base*
+  - [ ] File uploader (PDF, TXT); on upload: ingest → embed → store; show success/duplicate/error
+  - [ ] Document table: filename, chunk count, upload date, delete button
+  - [ ] Summary footer: total docs and total chunks
+- [ ] *Section: System Prompts*
+  - [ ] Load current prompts from `data/prompts.json` (fallback to `settings.py` defaults)
+  - [ ] `st.text_area("Medical Coding Prompt", ...)` — full editable text, tall height
+  - [ ] `st.text_area("Ambient Note Taking Prompt", ...)` — full editable text, tall height
+  - [ ] "💾 Save Prompts" button → write `data/prompts.json` + push new version to LangFuse + show active version number
+  - [ ] "↩ Reset to Defaults" button → reload defaults into text areas without saving
+- [ ] Verify: edit coding prompt → save → run a query in Tab 1 → LangFuse trace shows new prompt version
+
+**Tab 3 — Observability:**
 - [ ] Read `data/sessions/` JSONL files into a DataFrame
 - [ ] Render summary stats bar: total sessions, avg latency, avg cost, error count
 - [ ] Render session log table with filters (use case, date range)
 - [ ] Expandable row: full query, response, retrieved chunks, prompt version, token breakdown
 - [ ] "Export CSV" button
-- [ ] "Open in LangFuse" button → `st.link_button()` to user's LangFuse project URL (from config)
-- [ ] Verify: run 3 queries in Tab 1 → Tab 2 shows all 3 with correct metadata
+- [ ] "Open in LangFuse" button → `st.link_button()` to LangFuse project URL (from config)
+- [ ] Verify: run 3 queries in Tab 1 → Tab 3 shows all 3 with correct metadata
 
-**Tab 3 — Evaluation:**
+**Tab 4 — Evaluation:**
 - [ ] Render golden cases table with checkboxes (select which cases to run)
-- [ ] Layer selector checkboxes: Layer 1 (free), Layer 2 (RAGAS), Layer 3 (LLM-as-judge)
+- [ ] Layer selector checkboxes: Layer 1 (free/instant), Layer 2 (RAGAS), Layer 3 (LLM-as-judge)
 - [ ] Show estimated time and cost warning before running Layer 2/3
-- [ ] "Run Evaluation" button → calls `EvalRunner.run_all()` with spinner
+- [ ] "Run Evaluation" button → calls `EvalRunner.run_all()` with spinner per layer
 - [ ] Results table: case ID, L1 pass/fail, RAGAS faithfulness, judge overall score
-- [ ] Delta column vs baseline (green/amber/red)
+- [ ] Delta column vs baseline (green ✅ / amber ⚠️ / red 🔴)
 - [ ] "Set as Baseline" button → writes scores to `tests/eval/baseline.json`
 - [ ] Score history chart (scores over time, keyed by timestamp)
-- [ ] "Export Results" button
-- [ ] "Open in LangFuse" → eval traces in cloud dashboard
+- [ ] "Export Results" button + "Open in LangFuse" eval traces link
 - [ ] Verify: run Layer 1 only → all 5 cases show results instantly
 
 ### Step 1.9 — Unit Tests
@@ -255,3 +267,4 @@ Restructure into three tabs: `st.tabs(["🤖 Agent", "📊 Observability", "🧪
 | 0.3 | 2026-05-09 | V1 Phase 1 fleshed out with concrete steps |
 | 0.4 | 2026-05-09 | Specialized to coding + ambient; SapBERT replaces OpenAI embeddings; use case selector added to Step 1.7 |
 | 0.5 | 2026-05-10 | Three-tab UI in Step 1.8; EvalRunner module in Step 1.10; user workflows documented |
+| 0.6 | 2026-05-10 | Four-tab UI; KB & Prompts tab in Step 1.8; prompt persistence design |

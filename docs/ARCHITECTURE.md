@@ -423,6 +423,38 @@ tests/eval/
 
 ---
 
+### Prompt Persistence Design
+
+System prompts are editable at runtime via Tab 2. Persistence works in two layers:
+
+```
+config/settings.py          ← DEFAULT prompts (factory reset source, never modified)
+        │
+        ▼ (on first run, or after Reset to Defaults)
+data/prompts.json           ← user-edited prompts (persists across restarts)
+        │
+        ▼ (on every Save)
+LangFuse Prompt Registry    ← versioned prompt history (v1, v2, v3...)
+                               every trace links to the version that produced it
+```
+
+**Load order on startup:**
+1. Check if `data/prompts.json` exists
+2. If yes → load from `data/prompts.json`
+3. If no → load from `config/settings.py` defaults
+
+**On "Save Prompts":**
+1. Write to `data/prompts.json`
+2. Push new version to LangFuse (`langfuse.create_prompt()`)
+3. Update in-memory prompt cache
+4. Display new version number in Tab 2
+
+**On "Reset to Defaults":**
+1. Reload from `config/settings.py` into text areas (does NOT auto-save)
+2. User must click Save to make it permanent
+
+---
+
 ### User Workflow — Observability
 
 ```
@@ -470,3 +502,4 @@ tests/eval/
 | 0.3 | 2026-05-09 | V1 RAG layer: decisions locked, diagrams updated, components added |
 | 0.4 | 2026-05-09 | Specialized to coding + ambient; SapBERT replaces OpenAI embeddings; two system prompts added |
 | 0.5 | 2026-05-10 | Three-tab UI design; evaluation runner architecture; user workflows for obs+eval |
+| 0.6 | 2026-05-10 | Four-tab UI; Knowledge Base & Prompts tab; prompt persistence design |
