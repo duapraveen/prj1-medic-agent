@@ -8,6 +8,7 @@ from medic_agent.rag.store import (
     add_document,
     delete_document,
     document_exists,
+    get_document_info,
     list_documents,
 )
 
@@ -96,3 +97,32 @@ def test_delete_document_leaves_others_intact():
 
 def test_delete_nonexistent_document_does_not_raise():
     delete_document("ghost.pdf")  # should not raise
+
+
+# --- get_document_info ---
+
+def test_get_document_info_empty_initially():
+    assert get_document_info() == []
+
+
+def test_get_document_info_returns_filename_and_chunk_count():
+    add_document("info_test.pdf", _make_chunks("info_test.pdf", 4), _make_embeddings(4))
+    info = get_document_info()
+    assert len(info) == 1
+    assert info[0]["filename"] == "info_test.pdf"
+    assert info[0]["chunk_count"] == 4
+
+
+def test_get_document_info_includes_upload_date():
+    add_document("dated.pdf", _make_chunks("dated.pdf", 2), _make_embeddings(2))
+    info = get_document_info()
+    assert info[0]["upload_date"] != "Unknown"
+
+
+def test_get_document_info_multiple_documents():
+    add_document("a.pdf", _make_chunks("a.pdf", 2), _make_embeddings(2))
+    add_document("b.pdf", _make_chunks("b.pdf", 3), _make_embeddings(3))
+    info = get_document_info()
+    assert len(info) == 2
+    names = [d["filename"] for d in info]
+    assert "a.pdf" in names and "b.pdf" in names

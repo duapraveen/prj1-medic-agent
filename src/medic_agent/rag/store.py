@@ -1,4 +1,5 @@
 import chromadb
+from datetime import datetime, timezone
 
 from medic_agent.config.settings import CHROMA_PERSIST_DIR
 
@@ -20,13 +21,35 @@ def _get_collection():
 
 def add_document(doc_id: str, chunks: list[dict], embeddings: list[list[float]]) -> None:
     collection = _get_collection()
+    upload_date = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     ids = [f"{doc_id}::{chunk['chunk_index']}" for chunk in chunks]
     documents = [chunk["text"] for chunk in chunks]
     metadatas = [
-        {"source_filename": chunk["source_filename"], "chunk_index": chunk["chunk_index"]}
+        {
+            "source_filename": chunk["source_filename"],
+            "chunk_index": chunk["chunk_index"],
+            "upload_date": upload_date,
+        }
         for chunk in chunks
     ]
     collection.add(ids=ids, embeddings=embeddings, documents=documents, metadatas=metadatas)
+
+
+def get_document_info() -> list[dict]:
+    """Returns [{filename, chunk_count, upload_date}] for every stored document."""
+    collection = _get_collection()
+    result = collection.get(include=["metadatas"])
+    docs: dict[str, dict] = {}
+    for meta in result["metadatas"]:
+        name = meta["source_filename"]
+        if name not in docs:
+            docs[name] = {
+                "filename": name,
+                "chunk_count": 0,
+                "upload_date": meta.get("upload_date", "Unknown"),
+            }
+        docs[name]["chunk_count"] += 1
+    return sorted(docs.values(), key=lambda d: d["filename"])
 
 
 def document_exists(doc_id: str) -> bool:
