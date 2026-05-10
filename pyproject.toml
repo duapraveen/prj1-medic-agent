@@ -4,8 +4,13 @@ version = "0.1.0"
 description = "Healthcare-focused AI agent with multi-LLM support"
 requires-python = ">=3.11"
 dependencies = [
+    "chromadb>=1.5.9",
+    "huggingface-hub>=1.14.0",
+    "langfuse>=4.6.1",
     "litellm>=1.83.14",
+    "pypdf>=6.11.0",
     "python-dotenv>=1.2.2",
+    "ragas>=0.4.3",
     "streamlit>=1.57.0",
 ]
 

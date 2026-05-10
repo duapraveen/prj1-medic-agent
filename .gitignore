@@ -16,3 +16,6 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+
+# Data — vector store, sessions, user-edited prompts (never commit)
+data/
