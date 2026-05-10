@@ -80,13 +80,18 @@ Phase 3 (V3): Production-Ready ← Future
 **Success:** Upload a clinical PDF, ask a question about it, get a cited answer.
 
 ### Step 1.1 — Dependencies and Storage Setup
-- [ ] `uv add chromadb pypdf openai` 
-- [ ] Add `OPENAI_API_KEY` to `.env` and `.env.example`
-- [ ] Update `config/settings.py`: validate `OPENAI_API_KEY`, add `CHROMA_PERSIST_DIR`, `EMBEDDING_MODEL`
+- [ ] `uv add chromadb pypdf huggingface_hub`
+- [ ] Add `HUGGINGFACE_API_KEY` to `.env` and `.env.example`
+- [ ] Update `config/settings.py`:
+  - Validate `HUGGINGFACE_API_KEY` at startup
+  - Add `CHROMA_PERSIST_DIR = "data/chroma"`
+  - Add `EMBEDDING_MODEL = "cambridgeltl/SapBERT-from-PubMedBERT-fulltext"`
+  - Add `CODING_SYSTEM_PROMPT` and `AMBIENT_SYSTEM_PROMPT` constants
+  - Add `USE_CASES` dict mapping display names to system prompts
 - [ ] Create `data/chroma/` directory
 - [ ] Add `data/` to `.gitignore`
 - [ ] Create `src/medic_agent/rag/__init__.py` and `tests/rag/__init__.py`
-- [ ] Verify: `uv run python -c "import chromadb; import pypdf; import openai; print('OK')"`
+- [ ] Verify: `uv run python -c "import chromadb; import pypdf; import huggingface_hub; print('OK')"`
 
 ### Step 1.2 — Document Ingestor (`rag/ingestor.py`)
 - [ ] `load_pdf(file_bytes: bytes, filename: str) -> list[dict]`
@@ -98,8 +103,9 @@ Phase 3 (V3): Production-Ready ← Future
 ### Step 1.3 — Embedder (`rag/embedder.py`)
 - [ ] `embed_texts(texts: list[str]) -> list[list[float]]` — batch, for ingestion
 - [ ] `embed_query(query: str) -> list[float]` — single, for retrieval
-- [ ] Model: `text-embedding-3-small` via OpenAI client
-- [ ] Verify: embed a test sentence, confirm vector has 1536 dimensions
+- [ ] Model: `cambridgeltl/SapBERT-from-PubMedBERT-fulltext` via `huggingface_hub.InferenceClient`
+- [ ] Apply mean pooling across token dimension to get sentence-level vector (768 dims)
+- [ ] Verify: embed "myocardial infarction" and "I21.9" — confirm vectors are close in cosine similarity
 
 ### Step 1.4 — Vector Store (`rag/store.py`)
 - [ ] `add_document(doc_id, chunks, embeddings) -> None`
@@ -123,11 +129,14 @@ Phase 3 (V3): Production-Ready ← Future
 - [ ] Verify: call `ask()` with context, confirm response references the document
 
 ### Step 1.7 — Update Streamlit UI (`ui/app.py`)
-- [ ] Add sidebar: file uploader (PDF + TXT), document list, delete button
-- [ ] On upload: ingest → embed → store pipeline; show success/duplicate message
-- [ ] On query: retrieve → inject context → call `ask()`
+- [ ] Add sidebar: use case selector (Medical Coding / Ambient Note Taking)
+- [ ] Use case selector drives system prompt and input label/placeholder
+- [ ] Add sidebar: file uploader (PDF + TXT), document list with delete buttons
+- [ ] On upload: ingest → embed → store pipeline; show success/duplicate/error message
+- [ ] On query: retrieve top-5 chunks → inject context → call `ask()` with selected system prompt
 - [ ] Show source citations below response
-- [ ] Verify: full upload → query → cited response flow in browser
+- [ ] Verify: upload encounter doc → select "Medical Coding" → submit → get coded output with citations
+- [ ] Verify: paste transcript → select "Ambient Note Taking" → submit → get SOAP note + codes
 
 ### Step 1.8 — Tests
 - [ ] `tests/rag/test_ingestor.py`: chunk count, overlap, metadata fields
@@ -192,3 +201,4 @@ Phase 3 (V3): Production-Ready ← Future
 | 0.1 | 2026-05-09 | Initial scaffold |
 | 0.2 | 2026-05-09 | Updated file paths to src/medic_agent/ structure |
 | 0.3 | 2026-05-09 | V1 Phase 1 fleshed out with concrete steps |
+| 0.4 | 2026-05-09 | Specialized to coding + ambient; SapBERT replaces OpenAI embeddings; use case selector added to Step 1.7 |

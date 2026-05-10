@@ -171,15 +171,23 @@ User types query
 | FastAPI | latest | API layer | Approved for HTTP interface alongside Streamlit |
 | ChromaDB | latest | Vector database | Local, persistent, no server required; purpose-built for embeddings |
 | pypdf | latest | PDF parsing | Lightweight pure-Python PDF reader; no system dependencies |
-| openai | latest | Embeddings API | text-embedding-3-small: high quality, cheap ($0.02/M tokens), simple |
+| huggingface_hub | latest | Embeddings API client | InferenceClient for SapBERT feature extraction via HuggingFace API |
 | pytest + pytest-mock | latest | Testing | Standard Python test framework with mocking support |
 
+**Embedding model: SapBERT**
+- Model ID: `cambridgeltl/SapBERT-from-PubMedBERT-fulltext`
+- Why: purpose-built for UMLS medical entity linking — covers ICD-10, SNOMED CT, CPT, LOINC, RxNorm
+- Outputs: 768-dimensional vectors
+- Accessed via: HuggingFace Inference API (`HUGGINGFACE_API_KEY`)
+- Why not OpenAI embeddings: general-purpose models lack medical ontology grounding; ICD codes, SNOMED synonyms, and clinical abbreviations are significantly better represented in SapBERT
+- Why not local SapBERT: HuggingFace Inference API avoids local GPU/memory overhead; free tier is sufficient for dev use
+
 **Not used and why:**
-- **LangChain / LlamaIndex** — we understand the RAG fundamentals now; still adding unnecessary abstraction for our use case
+- **LangChain / LlamaIndex** — we understand the RAG fundamentals now; still adds unnecessary abstraction
 - **Flask** — FastAPI approved instead
-- **Ollama / local embeddings** — API embeddings are cheaper per token and simpler to operate; revisit if offline requirement emerges
+- **OpenAI embeddings** — replaced by SapBERT; medical ontology grounding is required for coding use cases
 - **Docker** — unnecessary overhead for local app
-- **Postgres / SQLite** — ChromaDB covers our persistence needs
+- **Postgres / SQLite** — ChromaDB covers all persistence needs
 
 ---
 
@@ -195,22 +203,50 @@ User types query
 
 ## 7. System Prompt Strategy
 
+Two specialized system prompts — one per use case. Selected via the use case selector in the UI.
+Both live in `config/settings.py` and are passed into `llm/client.py` at call time.
 
-The system prompt is what tells the LLM to behave as a healthcare assistant.
-This is a key product decision — the quality of the system prompt directly impacts response quality.
-
-**V0 Approach:** Single hardcoded system prompt loaded from `config.py`
+### Use Case 1 — Medical Coding
 
 ```
-System Prompt:
-"You are a knowledgeable healthcare assistant. You help clinicians, 
-administrators, and patients with healthcare-related questions. 
-You provide accurate, evidence-based information. You always recommend 
-consulting a licensed healthcare professional for medical decisions. 
-You do not provide diagnoses."
+You are a certified medical coding specialist with expertise in ICD-10-CM, ICD-10-PCS,
+CPT, and HCPCS Level II coding systems.
+
+When given clinical documentation about a patient encounter, you:
+1. Identify all diagnoses and assign accurate ICD-10-CM codes with full specificity
+2. Identify all procedures and assign appropriate CPT / HCPCS codes
+3. Sequence codes correctly (principal diagnosis first per UHDDS guidelines)
+4. Follow Official Coding Guidelines, AHA Coding Clinic, and AMA CPT guidelines
+5. Cite the specific document and section that supports each code assigned
+6. Flag documentation gaps that prevent accurate or specific code assignment
+
+Format your response as:
+  DIAGNOSIS CODES (ICD-10-CM)
+  PROCEDURE CODES (CPT / HCPCS)
+  DOCUMENTATION GAPS
+
+Never fabricate codes. If documentation is insufficient, state what is missing.
 ```
 
-**V1 Approach:** System prompt varies by user persona (clinician vs. patient vs. admin)
+### Use Case 2 — Ambient Note Taking
+
+```
+You are a clinical documentation specialist with expertise in SOAP note writing
+and medical coding from encounter transcripts.
+
+When given a physician-patient conversation transcript, you:
+1. Produce a structured SOAP note:
+   S — Subjective: chief complaint, HPI, ROS, patient-reported symptoms
+   O — Objective: exam findings, vitals, labs/imaging mentioned
+   A — Assessment: diagnoses with clinical reasoning
+   P — Plan: treatments, medications, orders, referrals, follow-up
+2. Assign ICD-10-CM codes for all diagnoses in the Assessment
+3. Identify CPT codes for any procedures performed or ordered
+4. Flag documentation gaps (missing SOAP elements, vague diagnoses)
+
+Distinguish clearly between patient-reported (Subjective) and clinician-observed
+(Objective) information. Never infer clinical facts not present in the transcript.
+```
 
 ---
 
@@ -261,12 +297,14 @@ All caching logic is isolated to `_build_messages()` in `llm/client.py`. The UI 
 
 | Decision | Choice | Reason |
 |---|---|---|
+| Use cases | Medical Coding + Ambient Note Taking | Highest-value, most technically demanding healthcare workflows |
 | Document types | PDF, plain text (.txt) | Most common in healthcare; FHIR JSON deferred to V2 |
 | Chunking | Recursive character split | Simple, effective; 1000 char window, 200 char overlap |
-| Embedding model | OpenAI text-embedding-3-small | 1536 dims, cheap, no local setup required |
+| Embedding model | SapBERT via HuggingFace Inference API | Medical ontology-aware; covers ICD-10, SNOMED, CPT, LOINC, RxNorm |
 | Vector store | ChromaDB PersistentClient | Local, free, no server, persists to data/chroma/ |
 | Retrieval strategy | Cosine similarity, top-5 | Simple and effective; MMR deferred to V2 |
 | Storage model | Persistent — upload once, use always | Single user; re-upload is unnecessary friction |
+| System prompts | Two prompts, one per use case | Coding and ambient note taking require fundamentally different instructions |
 | Context injection | Second cached block in _build_messages() | Hook already in place in llm/client.py |
 | Duplicate prevention | document_exists() check before ingestion | Avoid re-embedding already stored files |
 
@@ -295,3 +333,4 @@ This means queries against the same retrieved context are served at ~10% token c
 | 0.1 | 2026-05-09 | Initial scaffold |
 | 0.2 | 2026-05-09 | src/ structure, FastAPI approved, file paths updated |
 | 0.3 | 2026-05-09 | V1 RAG layer: decisions locked, diagrams updated, components added |
+| 0.4 | 2026-05-09 | Specialized to coding + ambient; SapBERT replaces OpenAI embeddings; two system prompts added |

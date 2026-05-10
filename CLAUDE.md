@@ -8,11 +8,12 @@ NEVER deviate from these instructions without explicit user approval.
 
 ## Project Overview
 
-**medic-agent** is a healthcare-focused AI agent application.
-It allows a user to submit natural language queries and receive answers from an LLM.
-The app is designed for healthcare contexts: clinical, administrative (RCM, scheduling, claims), and patient-facing use cases.
+**medic-agent** is a healthcare AI agent specialized for two high-value clinical workflows:
 
-**Current phase:** V1 — adding RAG layer: document ingestion, embedding, persistent vector store, retrieval-grounded responses.
+1. **Medical Coding** — given encounter documents, produce ICD-10-CM, CPT, and HCPCS codes with citations and documentation gap analysis
+2. **Ambient Note Taking** — given a physician-patient conversation transcript, produce a structured SOAP note and accurate billable code list
+
+**Current phase:** V1 — RAG layer: document ingestion (PDF/TXT), SapBERT embeddings (medical ontology-aware), ChromaDB persistent storage, retrieval-grounded responses, two specialized system prompts.
 
 ---
 
@@ -28,7 +29,7 @@ The app is designed for healthcare contexts: clinical, administrative (RCM, sche
 | Config / Secrets | python-dotenv + .env | Standard, safe, local |
 | Vector Database | ChromaDB (PersistentClient) | Local, no server, persists to data/chroma/ |
 | PDF Parsing | pypdf | Lightweight, pure Python, no system dependencies |
-| Embeddings | OpenAI text-embedding-3-small | Via OPENAI_API_KEY; 1536 dims, cheap |
+| Embeddings | SapBERT via HuggingFace Inference API | Medical ontology-aware; ICD-10, SNOMED, CPT, LOINC. Model: `cambridgeltl/SapBERT-from-PubMedBERT-fulltext`. 768 dims. Via HUGGINGFACE_API_KEY |
 | Version Control | Git | Standard |
 
 Do NOT suggest or introduce Flask, LangChain, LlamaIndex, or other frameworks unless the user explicitly approves it.
@@ -137,17 +138,19 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 
 ## Current V1 Acceptance Criteria
 
+- [ ] Use case selector (Medical Coding / Ambient Note Taking) switches system prompt
 - [ ] User can upload a PDF or TXT file via the sidebar
-- [ ] Uploaded documents are parsed, chunked, embedded, and stored in ChromaDB
+- [ ] Uploaded documents are parsed, chunked, embedded (SapBERT), and stored in ChromaDB
 - [ ] Documents persist across app restarts — no re-upload needed
 - [ ] User can see the list of uploaded documents in the sidebar
 - [ ] User can delete a document from the store
 - [ ] Duplicate uploads are detected and skipped
 - [ ] On query, top-5 relevant chunks are retrieved and injected as context
-- [ ] Response cites which document(s) it drew from
+- [ ] Coding response: ICD-10-CM + CPT codes with document citations + gap flags
+- [ ] Ambient response: full SOAP note + code list + documentation flags
 - [ ] Context injection uses prompt caching (cache_control: ephemeral)
 - [ ] All new modules have unit tests with mocked external calls
-- [ ] OPENAI_API_KEY loaded from .env, never hardcoded
+- [ ] HUGGINGFACE_API_KEY loaded from .env, never hardcoded
 
 ---
 
@@ -161,6 +164,9 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 | 2026-05-09 | Use uv over pip | Modern standard, faster, better env isolation |
 | 2026-05-09 | No LangChain | Adds abstraction before fundamentals are understood |
 | 2026-05-09 | Prompt caching enabled | cache_control on system prompt + future doc context; isolated to _build_messages() in llm/client.py |
-| 2026-05-09 | OpenAI embeddings over local | Simpler, no Ollama setup; text-embedding-3-small is cheap and high quality |
+| 2026-05-09 | SapBERT over OpenAI embeddings | Medical ontology grounding required for ICD/SNOMED/CPT; SapBERT trained on UMLS |
+| 2026-05-09 | HuggingFace Inference API over local | No GPU/memory overhead; free tier sufficient for dev |
 | 2026-05-09 | ChromaDB persistent over in-memory | Single user; persist once, query always; stored at data/chroma/ |
 | 2026-05-09 | PDF + TXT for V1; FHIR JSON deferred | FHIR needs special extraction logic; keep V1 scope tight |
+| 2026-05-09 | Two system prompts, one per use case | Coding and ambient note taking have fundamentally different output requirements |
+| 2026-05-09 | Specialized to coding + ambient note taking | Highest clinical value; requires deep medical ontology grounding |
