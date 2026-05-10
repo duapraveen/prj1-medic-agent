@@ -80,8 +80,8 @@ Phase 3 (V3): Production-Ready ← Future
 **Success:** Upload a clinical PDF, ask a question about it, get a cited answer.
 
 ### Step 1.1 — Dependencies and Storage Setup
-- [ ] `uv add chromadb pypdf huggingface_hub`
-- [ ] Add `HUGGINGFACE_API_KEY` to `.env` and `.env.example`
+- [ ] `uv add chromadb pypdf huggingface_hub langfuse ragas`
+- [ ] Add `HUGGINGFACE_API_KEY` and `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` to `.env` and `.env.example`
 - [ ] Update `config/settings.py`:
   - Validate `HUGGINGFACE_API_KEY` at startup
   - Add `CHROMA_PERSIST_DIR = "data/chroma"`
@@ -128,7 +128,17 @@ Phase 3 (V3): Production-Ready ← Future
 - [ ] System prompt instructs LLM to cite sources and prefer document context
 - [ ] Verify: call `ask()` with context, confirm response references the document
 
-### Step 1.7 — Update Streamlit UI (`ui/app.py`)
+### Step 1.7 — Observability Hooks (`observability/tracer.py`)
+- [ ] Create `src/medic_agent/observability/__init__.py`
+- [ ] Create `src/medic_agent/observability/tracer.py`:
+  - `Session` dataclass: `session_id, timestamp, use_case, model_id, query, chunks_retrieved, system_prompt_version, response, latency_ms, token_usage, error`
+  - `log_session(session: Session) -> None` — writes JSON to `data/sessions/` AND sends to LangFuse
+  - LangFuse trace wraps the full pipeline: retrieval span + LLM span
+- [ ] Create `data/sessions/` directory; add to `.gitignore`
+- [ ] Wire `log_session()` call into `llm/client.py` after each `ask()` completes
+- [ ] Verify: submit a query → check LangFuse dashboard → see trace with retrieval + LLM spans
+
+### Step 1.8 — Update Streamlit UI (`ui/app.py`)
 - [ ] Add sidebar: use case selector (Medical Coding / Ambient Note Taking)
 - [ ] Use case selector drives system prompt and input label/placeholder
 - [ ] Add sidebar: file uploader (PDF + TXT), document list with delete buttons
@@ -138,12 +148,24 @@ Phase 3 (V3): Production-Ready ← Future
 - [ ] Verify: upload encounter doc → select "Medical Coding" → submit → get coded output with citations
 - [ ] Verify: paste transcript → select "Ambient Note Taking" → submit → get SOAP note + codes
 
-### Step 1.8 — Tests
+### Step 1.9 — Unit Tests
 - [ ] `tests/rag/test_ingestor.py`: chunk count, overlap, metadata fields
-- [ ] `tests/rag/test_embedder.py`: mocked OpenAI calls, correct dimensions
+- [ ] `tests/rag/test_embedder.py`: mocked HuggingFace calls, correct dimensions
 - [ ] `tests/rag/test_store.py`: in-memory ChromaDB (not persistent) for test isolation
 - [ ] `tests/rag/test_retriever.py`: mocked embedder + in-memory store
+- [ ] `tests/observability/test_tracer.py`: mocked LangFuse, verify session fields captured
 - [ ] All tests pass with `uv run pytest`
+
+### Step 1.10 — Evaluation Golden Dataset + LLM-as-Judge
+- [ ] Golden dataset lives at `tests/eval/golden_cases.json` (already created — see below)
+- [ ] Create `tests/eval/test_eval.py`:
+  - Layer 1 (deterministic): ICD-10 format regex, CPT format, SOAP section presence
+  - Layer 2 (RAGAS): faithfulness, context precision, answer relevancy — run against RAG pipeline
+  - Layer 3 (LLM-as-judge): Claude Sonnet judges Haiku output on structured rubric (1–5 per dimension)
+  - Judge model: `claude-sonnet-4-6` (smarter than the system being judged)
+- [ ] Scores written back to LangFuse as evaluation traces
+- [ ] Run: `uv run pytest tests/eval/ -v` produces a score report
+- [ ] Baseline scores recorded — this is the regression benchmark
 
 **V1 Complete when:** All items above are checked off.
 

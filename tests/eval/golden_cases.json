@@ -1,0 +1,126 @@
+{
+  "version": "0.1",
+  "description": "Synthetic golden cases for medic-agent evaluation. All patients and encounters are fictitious.",
+  "cases": [
+
+    {
+      "id": "coding_001",
+      "use_case": "medical_coding",
+      "description": "Type 2 diabetes with hyperglycemia + essential hypertension — quarterly office visit",
+      "input": "PROGRESS NOTE\nDate: 2026-05-01\nPatient: John D., 58M\n\nCC: Quarterly diabetes and hypertension follow-up.\n\nHPI: Patient presents for routine follow-up of Type 2 diabetes and hypertension. He reports increased fatigue over the past 3 weeks and occasional blurry vision. Denies chest pain, SOB, or leg swelling. Compliant with metformin 1000mg BID and lisinopril 10mg daily.\n\nVitals: BP 148/92 mmHg, HR 82, Wt 224 lbs, BMI 31.2\n\nExam: Alert and oriented. No acute distress. Cardiovascular: RRR, no murmurs. Extremities: no edema. Fundoscopic exam deferred.\n\nLabs (today): HbA1c 9.2%, Fasting glucose 218 mg/dL, eGFR 64 mL/min/1.73m2, Urine microalbumin: 42 mg/g (elevated).\n\nAssessment:\n1. Type 2 diabetes mellitus with hyperglycemia — HbA1c 9.2%, above goal. Add semaglutide 0.25mg weekly.\n2. Essential hypertension — BP above goal. Increase lisinopril to 20mg daily.\n3. Diabetic chronic kidney disease, stage G2A2 — eGFR 64, microalbuminuria present.\n\nPlan: Semaglutide 0.25mg SC weekly. Lisinopril increased to 20mg. Repeat HbA1c and BMP in 3 months. Nephrology referral placed. RTC 3 months.",
+      "expected": {
+        "icd10_codes": ["E11.65", "I10", "E11.65", "N18.2"],
+        "primary_icd10": "E11.65",
+        "cpt_codes": ["99214"],
+        "documentation_gaps": [],
+        "notes": "E11.65 = T2DM with hyperglycemia. I10 = essential hypertension. N18.2 = CKD stage 2 (eGFR 64 maps to G2). 99214 = office visit moderate complexity. Some coders may also add Z79.84 (long-term insulin use) if patient were on insulin — not applicable here."
+      },
+      "judge_criteria": {
+        "code_accuracy": "Must include E11.65 (not E11.9 — hyperglycemia is documented), I10, and N18.2. CKD code is critical given eGFR and microalbuminuria.",
+        "code_completeness": "Missing N18.2 is a significant error — it affects HCC risk scoring and quality metrics.",
+        "citation_quality": "Each code should cite: E11.65 ← HbA1c 9.2% + glucose 218; I10 ← BP 148/92; N18.2 ← eGFR 64 + microalbumin 42.",
+        "hallucination": "Should NOT code for retinopathy (fundoscopic deferred), nephropathy as separate code (use combination code approach), or any condition not in Assessment.",
+        "gap_identification": "Duration of diabetes not specified — relevant for some payer risk models. Hypertension staging (primary vs secondary) documented as essential — no gap there."
+      }
+    },
+
+    {
+      "id": "coding_002",
+      "use_case": "medical_coding",
+      "description": "COPD acute exacerbation with nebulizer treatment — ED encounter",
+      "input": "EMERGENCY DEPARTMENT NOTE\nDate: 2026-05-03\nPatient: Margaret L., 72F\n\nCC: Worsening shortness of breath x 2 days.\n\nHPI: Known COPD on home O2 2L NC. Presents with acute worsening dyspnea, increased sputum production (yellow-green), and low-grade fever 99.8F. Denies chest pain. No recent travel. No sick contacts.\n\nVitals: BP 138/84, HR 104, RR 26, Temp 99.8F, SpO2 88% on room air → 93% on 4L NC.\n\nExam: Moderate respiratory distress. Diffuse expiratory wheezes bilaterally. Prolonged expiratory phase. No accessory muscle use at rest.\n\nWorkup: CXR — hyperinflation, no consolidation, no pneumothorax. WBC 11.4. Sputum culture pending.\n\nTreatment:\n- Albuterol 2.5mg nebulizer treatment administered x3, 20-min intervals\n- Ipratropium 0.5mg nebulizer added to second treatment\n- Oral prednisone 40mg given\n- Azithromycin 500mg PO given\n- O2 titrated to maintain SpO2 >92%\n\nAssessment: Acute exacerbation of COPD, likely infectious trigger.\n\nDisposition: Admit to observation. Pulmonology consult ordered.",
+      "expected": {
+        "icd10_codes": ["J44.1", "Z87.891"],
+        "primary_icd10": "J44.1",
+        "cpt_codes": ["94640", "99285"],
+        "documentation_gaps": ["Smoking status not documented — required for COPD risk adjustment", "COPD severity (GOLD stage) not specified"],
+        "notes": "J44.1 = COPD with acute exacerbation. Z87.891 = personal history of nicotine dependence (inferred — but actually should not code if not documented). 94640 = pressurized inhalation treatment. 99285 = ED visit high complexity. Note: coding smoking history requires explicit documentation."
+      },
+      "judge_criteria": {
+        "code_accuracy": "J44.1 is the correct COPD exacerbation code. Must NOT use J44.0 (infection, not confirmed) or J44.9 (unspecified) when exacerbation is documented.",
+        "code_completeness": "94640 for nebulizer is a key procedure code — missing it is a revenue impact. 99285 for ED complexity.",
+        "citation_quality": "J44.1 ← 'Acute exacerbation of COPD' in Assessment. 94640 ← 'Albuterol 2.5mg nebulizer x3'.",
+        "hallucination": "Should NOT code pneumonia (no consolidation on CXR, culture pending). Should NOT code respiratory failure (SpO2 corrected with O2).",
+        "gap_identification": "Smoking status is a mandatory documentation gap for COPD. GOLD staging should be flagged."
+      }
+    },
+
+    {
+      "id": "coding_003",
+      "use_case": "medical_coding",
+      "description": "Acute MI — intentionally sparse documentation to test gap detection",
+      "input": "DISCHARGE SUMMARY\nPatient: Robert K., 65M\nAdmission: 2026-04-28  Discharge: 2026-04-30\n\nAdmitting Diagnosis: Chest pain, rule out MI\n\nHospital Course: Patient presented with acute onset chest pain. EKG showed ST elevation in leads II, III, aVF. Troponin I peaked at 18.4 ng/mL. Patient taken emergently to cath lab. Coronary angiography performed. Stent placed. Patient stabilized and discharged on aspirin, clopidogrel, atorvastatin, metoprolol.\n\nCondition at Discharge: Stable.\n\nDischarge Medications: Aspirin 81mg, Clopidogrel 75mg, Atorvastatin 40mg, Metoprolol 25mg BID.",
+      "expected": {
+        "icd10_codes": ["I21.19", "Z95.5"],
+        "primary_icd10": "I21.19",
+        "cpt_codes": ["92928", "93454"],
+        "documentation_gaps": [
+          "Specific coronary artery involved not documented (LAD? RCA? LCX?) — affects code specificity from I21.19 to I21.02/I21.11",
+          "Number of vessels stented not documented",
+          "Ejection fraction not documented — affects subsequent care coding",
+          "Reason for inferior leads ST elevation consistent with RCA/LCX — laterality should be specified"
+        ],
+        "notes": "I21.19 = STEMI of other coronary artery (inferior wall given ST elevation in II/III/aVF, but specific artery not named). Z95.5 = presence of coronary stent. 92928 = PCI with stent. 93454 = coronary angiography. Better specificity possible if artery documented."
+      },
+      "judge_criteria": {
+        "code_accuracy": "Must use STEMI code (I21.xx), not NSTEMI — ST elevation and troponin peak documented. Must NOT use I25.x (chronic IHD) as primary.",
+        "code_completeness": "Z95.5 (stent presence) and procedure codes 92928/93454 should be present.",
+        "citation_quality": "STEMI ← 'ST elevation in II/III/aVF' + troponin 18.4. Stent ← 'Stent placed'.",
+        "hallucination": "Should NOT code heart failure (not documented). Should NOT code specific artery (LAD/RCA) when not documented.",
+        "gap_identification": "This case is specifically designed to test gap detection. The model should flag: artery not specified, vessels not counted, EF missing."
+      }
+    },
+
+    {
+      "id": "soap_001",
+      "use_case": "ambient_note",
+      "description": "Hypertension follow-up — clean transcript, complete information",
+      "input": "ENCOUNTER TRANSCRIPT\nDate: 2026-05-05\n\nDoctor: Good morning, how are you feeling today?\nPatient: Pretty good, doctor. A little tired but overall okay.\nDoctor: How's the blood pressure been at home?\nPatient: I've been checking it. It's been running around 135 to 145 over 85 to 90. I have the log here.\nDoctor: Good. Any headaches, vision changes, chest pain, or shortness of breath?\nPatient: No, none of those.\nDoctor: Any swelling in your legs?\nPatient: No.\nDoctor: Are you taking your lisinopril every day?\nPatient: Yes, 10mg every morning without fail.\nDoctor: Good. Let me check you out. [pause] Blood pressure today is 138/86. Heart rate 74. Lungs are clear. Heart sounds are normal, no murmurs. No peripheral edema. Your labs from last week look good — kidney function is stable, potassium is 4.1, no concerns there.\nDoctor: So your blood pressure is better than it was three months ago but still not quite at our target of below 130/80. I think we should increase your lisinopril to 20mg. Same timing, just double the dose.\nPatient: Will that cause any side effects?\nDoctor: The main thing to watch for is a dry cough. If that happens, we can switch to a different medication. Also dizziness when you stand up quickly — that's usually temporary. Let me know if it's a problem.\nPatient: Okay, I can do that.\nDoctor: I want to recheck your blood pressure and labs in 6 weeks. If we're at target then, we'll just continue. Any other concerns today?\nPatient: No, I think that's it.\nDoctor: Great. The nurse will get your new prescription and schedule the follow-up.",
+      "expected": {
+        "soap_sections": ["S", "O", "A", "P"],
+        "subjective_key_elements": ["fatigue", "home BP 135-145/85-90", "no headaches", "no vision changes", "no chest pain", "no SOB", "no leg swelling", "compliant with lisinopril 10mg"],
+        "objective_key_elements": ["BP 138/86", "HR 74", "clear lungs", "normal heart sounds", "no edema", "stable kidney function", "potassium 4.1"],
+        "assessment_key_elements": ["essential hypertension", "not at BP target"],
+        "icd10_codes": ["I10"],
+        "cpt_codes": ["99213"],
+        "no_fabricated_elements": true,
+        "documentation_flags": ["Duration of hypertension not mentioned in transcript"]
+      },
+      "judge_criteria": {
+        "soap_completeness": "All 4 sections must be present. S must include home BP log reference, symptom review (negatives count), and medication compliance. O must include today's vitals and exam findings. A must state hypertension not at goal. P must include dose increase, side effect counseling, and 6-week follow-up.",
+        "subj_obj_distinction": "Home BP readings (patient-reported) go in S. Office BP 138/86 (clinician-measured) goes in O. Fatigue is S. Lab results are O.",
+        "code_accuracy": "I10 = essential hypertension. 99213 = established patient moderate complexity (one chronic condition, prescription change).",
+        "faithfulness": "The SOAP must NOT include any clinical information not in the transcript. Doctor did not perform fundoscopic exam, did not mention diabetes — these must not appear.",
+        "clinical_quality": "A complete, clean hypertension follow-up note. Side effect counseling (cough, orthostatic hypotension) documented in P is clinically appropriate and present in transcript."
+      }
+    },
+
+    {
+      "id": "soap_002",
+      "use_case": "ambient_note",
+      "description": "Chest pain evaluation — ambiguous findings, tests for fabrication resistance",
+      "input": "ENCOUNTER TRANSCRIPT\nDate: 2026-05-06\n\nDoctor: So what brings you in today?\nPatient: I've had this chest pain for about two days. It's right here [points to left chest]. Kind of sharp. Worse when I take a deep breath or when I press on it.\nDoctor: Does it radiate anywhere? To your arm, jaw, or back?\nPatient: No, it stays right there.\nDoctor: Any shortness of breath?\nPatient: A little, but I think it's because the pain makes me not want to breathe deeply.\nDoctor: Any recent illness, travel, long car rides or flights?\nPatient: I had a cold about two weeks ago. No travel.\nDoctor: Any history of heart disease, blood clots?\nPatient: No.\nDoctor: How old are you?\nPatient: 34.\nDoctor: Okay. Let me examine you. [pause] Vitals are: BP 122/78, HR 88, respiratory rate 16, oxygen saturation 99% on room air, temperature normal. Chest wall — I can reproduce the pain with palpation at the left 4th and 5th costochondral junction. Lungs are clear to auscultation bilaterally. Heart is regular rate and rhythm, no murmurs.\nDoctor: I think what you're having is costochondritis — inflammation at the joint where your ribs meet your sternum. It's common after viral illness. It's not dangerous. I'd like you to take ibuprofen 400mg three times a day with food for a week. Avoid heavy lifting. It should resolve on its own. If you develop fever, worsening shortness of breath, or the pain changes character — more pressure-like — please go to the ER.\nPatient: So it's not my heart?\nDoctor: Based on your age, risk factors, the character of your pain, and the exam, this is musculoskeletal. If anything changes, we'll investigate further.\nPatient: That's a relief. Thank you.",
+      "expected": {
+        "soap_sections": ["S", "O", "A", "P"],
+        "subjective_key_elements": ["sharp chest pain x2 days", "left chest", "pleuritic (worse with deep breath)", "reproducible with palpation", "no radiation", "mild dyspnea", "recent viral illness 2 weeks ago", "no cardiac history", "34-year-old"],
+        "objective_key_elements": ["BP 122/78", "HR 88", "RR 16", "SpO2 99%", "afebrile", "reproducible tenderness at L 4th-5th costochondral junction", "clear lungs", "RRR no murmurs"],
+        "assessment_key_elements": ["costochondritis"],
+        "icd10_codes": ["M94.0"],
+        "cpt_codes": ["99213"],
+        "no_fabricated_elements": true,
+        "documentation_flags": [
+          "EKG not performed — reasonable given low risk but worth noting",
+          "Return precautions documented verbally — should be noted in chart"
+        ]
+      },
+      "judge_criteria": {
+        "soap_completeness": "S must capture pleuritic quality, reproducibility, and post-viral context — these are the key diagnostic features. O must document the costochondral tenderness finding explicitly. P must include ibuprofen dosing, activity restriction, and return precautions.",
+        "subj_obj_distinction": "Patient pointing to location and describing character = S. Clinician reproducing pain on palpation = O. Do NOT put reproducibility in S — the clinician confirmed it, so it belongs in O.",
+        "code_accuracy": "M94.0 = chondrocostal junction syndrome (costochondritis). 99213 = established/new patient low-moderate complexity. Do NOT code chest pain (R07.x) — the clinician gave a definitive diagnosis.",
+        "faithfulness": "CRITICAL: Model must NOT add EKG results (none done), troponin (not ordered), or cardiac workup. No ACS workup was performed. The diagnosis is clinical. Fabricating normal EKG or troponin would be a serious error.",
+        "clinical_quality": "Post-viral costochondritis in a 34-year-old with pleuritic, reproducible chest pain and no cardiac risk factors — the clinical reasoning is sound and should be reflected in the note."
+      }
+    }
+
+  ]
+}

@@ -30,6 +30,8 @@ NEVER deviate from these instructions without explicit user approval.
 | Vector Database | ChromaDB (PersistentClient) | Local, no server, persists to data/chroma/ |
 | PDF Parsing | pypdf | Lightweight, pure Python, no system dependencies |
 | Embeddings | SapBERT via HuggingFace Inference API | Medical ontology-aware; ICD-10, SNOMED, CPT, LOINC. Model: `cambridgeltl/SapBERT-from-PubMedBERT-fulltext`. 768 dims. Via HUGGINGFACE_API_KEY |
+| Observability | LangFuse (cloud free tier) | LLM-native tracing; prompt versioning; LLM-as-judge eval; 50k obs/month free |
+| Evaluation | RAGAS + LLM-as-judge (Claude Sonnet) + deterministic checks | Three-layer hybrid; scores written to LangFuse |
 | Version Control | Git | Standard |
 
 Do NOT suggest or introduce Flask, LangChain, LlamaIndex, or other frameworks unless the user explicitly approves it.
@@ -62,6 +64,9 @@ prj1-medic-agent/
 │       └── config/            ← configuration and settings
 │           ├── __init__.py
 │           └── settings.py
+│       ├── observability/     ← tracing + LangFuse integration
+│       │   ├── __init__.py
+│       │   └── tracer.py      ← Session dataclass, JSON log, LangFuse spans
 │       └── rag/               ← RAG pipeline (V1)
 │           ├── __init__.py
 │           ├── ingestor.py    ← file loading + chunking
@@ -70,14 +75,22 @@ prj1-medic-agent/
 │           └── retriever.py   ← query → top-k relevant chunks
 ├── data/
 │   └── chroma/                ← ChromaDB on-disk storage (gitignored)
+├── data/
+│   ├── chroma/                ← ChromaDB on-disk storage (gitignored)
+│   └── sessions/              ← JSON session logs for auditability (gitignored)
 ├── tests/
 │   ├── llm/
 │   │   └── test_client.py
-│   └── rag/
-│       ├── test_ingestor.py
-│       ├── test_embedder.py
-│       ├── test_store.py
-│       └── test_retriever.py
+│   ├── rag/
+│   │   ├── test_ingestor.py
+│   │   ├── test_embedder.py
+│   │   ├── test_store.py
+│   │   └── test_retriever.py
+│   ├── observability/
+│   │   └── test_tracer.py
+│   └── eval/
+│       ├── golden_cases.json  ← synthetic test cases with expected outputs
+│       └── test_eval.py       ← three-layer eval runner
 ├── .env                       ← secrets (never commit this)
 ├── .env.example               ← template for .env (safe to commit)
 ├── .gitignore
@@ -122,7 +135,8 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 - Do NOT add async/streaming. Keep it synchronous.
 - Do NOT use a relational database. ChromaDB covers all persistence needs.
 - Do NOT re-embed a document that already exists in the store — always check `document_exists()` first.
-- Do NOT make real API calls in tests. Mock all external calls (OpenAI, Anthropic, ChromaDB).
+- Do NOT make real API calls in unit tests. Mock all external calls (HuggingFace, Anthropic, ChromaDB, LangFuse).
+- Eval tests (`tests/eval/`) MAY make real LLM calls — they are integration tests, not unit tests. Run them explicitly, not as part of the default `pytest` suite.
 - Do NOT create new files unless absolutely necessary.
 
 ---
@@ -150,7 +164,11 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 - [ ] Ambient response: full SOAP note + code list + documentation flags
 - [ ] Context injection uses prompt caching (cache_control: ephemeral)
 - [ ] All new modules have unit tests with mocked external calls
-- [ ] HUGGINGFACE_API_KEY loaded from .env, never hardcoded
+- [ ] HUGGINGFACE_API_KEY and LANGFUSE keys loaded from .env, never hardcoded
+- [ ] Each query produces a LangFuse trace with retrieval span + LLM span
+- [ ] Session logs written to data/sessions/ as JSON lines
+- [ ] Eval golden dataset (5 cases) passes Layer 1 deterministic checks
+- [ ] Baseline LLM-as-judge scores recorded in LangFuse
 
 ---
 
@@ -170,3 +188,6 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 | 2026-05-09 | PDF + TXT for V1; FHIR JSON deferred | FHIR needs special extraction logic; keep V1 scope tight |
 | 2026-05-09 | Two system prompts, one per use case | Coding and ambient note taking have fundamentally different output requirements |
 | 2026-05-09 | Specialized to coding + ambient note taking | Highest clinical value; requires deep medical ontology grounding |
+| 2026-05-10 | LangFuse over Arize Phoenix | Cloud acceptable (no real patient data); LangFuse adds prompt versioning + integrated eval |
+| 2026-05-10 | Three-layer eval: deterministic + RAGAS + LLM-as-judge | Codes are right/wrong (deterministic); RAG quality needs RAGAS; overall quality needs LLM judge |
+| 2026-05-10 | Judge model: Claude Sonnet judges Claude Haiku | Judge must be smarter than the system being evaluated |

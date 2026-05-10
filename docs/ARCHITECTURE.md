@@ -326,6 +326,86 @@ This means queries against the same retrieved context are served at ~10% token c
 
 ---
 
+## 12. Observability Architecture
+
+**Tool:** LangFuse (cloud free tier — 50k obs/month, 30-day retention, prompt versioning, LLM-as-judge eval)
+**Why LangFuse over Datadog:** Datadog is infrastructure APM — not LLM-native. LangFuse is purpose-built for tracing LLM pipelines with retrieval spans, token costs, and evaluation hooks.
+**Why LangFuse over Arize Phoenix:** Equivalent tracing quality; LangFuse adds prompt versioning (critical when iterating system prompts) and integrated eval dataset management.
+
+### What Gets Traced Per Session
+
+```
+LangFuse Trace (1 per user query)
+├── span: retrieval
+│   ├── input: user query
+│   ├── output: [{text, source_filename, chunk_index, similarity_score}]
+│   └── latency_ms
+└── span: llm_call
+    ├── input: {model_id, system_prompt_version, context_block, user_query}
+    ├── output: response text
+    ├── token_usage: {prompt_tokens, completion_tokens, cached_tokens}
+    └── latency_ms
+
+Session metadata: session_id, timestamp, use_case, model_id, error (if any)
+```
+
+### Local Fallback
+
+`tracer.py` also writes each session as a JSON line to `data/sessions/YYYY-MM-DD.jsonl`.
+This is the auditability record that survives LangFuse's 30-day retention window.
+
+### Prompt Versioning
+
+All system prompts are registered in LangFuse as named, versioned prompts.
+When a prompt changes, a new version is created — every trace is linked to its prompt version.
+This enables: "did changing the coding prompt from v2 → v3 improve scores?"
+
+---
+
+## 13. Evaluation Framework
+
+### Three-Layer Hybrid
+
+**Layer 1 — Deterministic (always run, instant, free)**
+| Check | Method |
+|---|---|
+| ICD-10-CM format | Regex: `^[A-Z]\d{2}(\.\w{1,4})?$` |
+| CPT code format | Regex: `^\d{5}$` |
+| SOAP sections present | String search for S/O/A/P headers |
+| Response not empty | Length check |
+
+**Layer 2 — RAGAS (RAG pipeline quality)**
+| Metric | Measures |
+|---|---|
+| Faithfulness | Does LLM response stay grounded in retrieved chunks? |
+| Context Precision | Were the retrieved chunks actually relevant to the query? |
+| Answer Relevancy | Does the response address the query? |
+
+**Layer 3 — LLM-as-Judge (quality, Claude Sonnet judges Haiku)**
+
+*Coding rubric (1–5 per dimension):*
+- `code_accuracy`: Are suggested codes clinically appropriate?
+- `code_completeness`: Are important codes missing?
+- `citation_quality`: Does each code cite supporting documentation?
+- `hallucination`: Does response include codes not supported by docs? (5=none)
+- `gap_identification`: Did the model correctly flag documentation gaps?
+
+*Ambient/SOAP rubric (1–5 per dimension):*
+- `soap_completeness`: All 4 sections present and appropriately populated?
+- `subj_obj_distinction`: Patient-reported info in S, clinician-observed in O?
+- `code_accuracy`: Are ICD/CPT codes clinically appropriate?
+- `faithfulness`: Does the note stick to the transcript — no fabricated facts?
+- `clinical_quality`: Would this SOAP be acceptable in a clinical setting?
+
+### Golden Dataset
+- Location: `tests/eval/golden_cases.json`
+- 3 coding cases + 2 SOAP cases (synthetic, de-identified)
+- Each case: `{id, use_case, description, input, expected, judge_criteria}`
+- Scores written back to LangFuse as evaluation traces
+- Baseline scores locked after V1 → regression detected automatically
+
+---
+
 ## 11. Revision History
 
 | Version | Date | Change |
