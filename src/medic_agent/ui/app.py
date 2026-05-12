@@ -396,15 +396,35 @@ def _render_eval_tab() -> None:
             chosen_cases = [c for c in cases if c["id"] in chosen_ids]
             with st.spinner("Running evaluation…"):
                 results = EvalRunner().run_all(chosen_cases, layers)
-            _render_eval_results(results)
+            st.session_state["eval_results"] = results
+            st.session_state["eval_layers"] = layers
         except ImportError:
             st.info("EvalRunner not yet implemented (coming in Step 1.10).")
+
+    if "eval_results" in st.session_state:
+        _render_eval_results(st.session_state["eval_results"])
 
     st.divider()
     if BASELINE_PATH.exists():
         st.caption(f"Baseline: `{BASELINE_PATH}`")
+
     if st.button("📌 Set as Baseline"):
-        st.info("Run evaluation first, then set as baseline.")
+        results = st.session_state.get("eval_results")
+        if not results:
+            st.warning("Run evaluation first, then set as baseline.")
+        else:
+            baseline = {
+                r.case_id: {
+                    "layer1_pass": r.layer1_pass,
+                    "judge_overall": (r.judge_scores or {}).get("overall", 0),
+                    "ragas_faithfulness": (r.ragas_scores or {}).get("faithfulness", 0),
+                    "layers_run": st.session_state.get("eval_layers", []),
+                    "timestamp": r.timestamp,
+                }
+                for r in results
+            }
+            BASELINE_PATH.write_text(json.dumps(baseline, indent=2))
+            st.success(f"✅ Baseline saved to `{BASELINE_PATH}` ({len(results)} cases).")
 
 
 # ---------------------------------------------------------------------------
