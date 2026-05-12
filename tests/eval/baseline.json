@@ -1,0 +1,52 @@
+{
+  "coding_001": {
+    "layer1_pass": true,
+    "judge_overall": 1.4,
+    "ragas_faithfulness": 0,
+    "layers_run": [
+      1,
+      3
+    ],
+    "timestamp": "2026-05-12T22:56:41.705923+00:00"
+  },
+  "coding_002": {
+    "layer1_pass": true,
+    "judge_overall": 1.4,
+    "ragas_faithfulness": 0,
+    "layers_run": [
+      1,
+      3
+    ],
+    "timestamp": "2026-05-12T22:56:51.930138+00:00"
+  },
+  "coding_003": {
+    "layer1_pass": true,
+    "judge_overall": 2.1,
+    "ragas_faithfulness": 0,
+    "layers_run": [
+      1,
+      3
+    ],
+    "timestamp": "2026-05-12T22:57:01.412603+00:00"
+  },
+  "soap_001": {
+    "layer1_pass": true,
+    "judge_overall": 1.8,
+    "ragas_faithfulness": 0,
+    "layers_run": [
+      1,
+      3
+    ],
+    "timestamp": "2026-05-12T22:57:18.736013+00:00"
+  },
+  "soap_002": {
+    "layer1_pass": true,
+    "judge_overall": 2.6,
+    "ragas_faithfulness": 0,
+    "layers_run": [
+      1,
+      3
+    ],
+    "timestamp": "2026-05-12T22:57:31.600795+00:00"
+  }
+}

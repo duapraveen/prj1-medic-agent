@@ -77,18 +77,34 @@ class EvalRunner:
 
     def run_layer2(self, case: dict, response: str, chunks: list[dict]) -> dict | None:
         try:
+            import warnings as _w
+            import instructor
+            import litellm as _litellm
             from ragas import evaluate
-            from ragas.metrics import faithfulness
-            from datasets import Dataset
+            from ragas.metrics import Faithfulness as _Faithfulness
+            from ragas.llms.litellm_llm import LiteLLMStructuredLLM
+            from ragas.dataset_schema import EvaluationDataset, SingleTurnSample
+
+            _w.filterwarnings("ignore", category=DeprecationWarning, module="ragas")
+
+            client = instructor.from_litellm(_litellm.completion)
+            llm = LiteLLMStructuredLLM(
+                client=client, model=DEFAULT_MODEL_ID, provider="anthropic"
+            )
+            metric = _Faithfulness()
+            metric.llm = llm
 
             ctx = [c["text"] for c in chunks] if chunks else [case["input"][:500]]
-            dataset = Dataset.from_dict({
-                "question": [case["input"][:500]],
-                "answer": [response],
-                "contexts": [ctx],
-            })
-            result = evaluate(dataset, metrics=[faithfulness])
-            return {"faithfulness": float(result["faithfulness"])}
+            sample = SingleTurnSample(
+                user_input=case["input"][:500],
+                retrieved_contexts=ctx,
+                response=response,
+            )
+            dataset = EvaluationDataset(samples=[sample])
+            result = evaluate(dataset, metrics=[metric], show_progress=False)
+            scores = result["faithfulness"]
+            score = float(scores[0]) if isinstance(scores, list) else float(scores)
+            return {"faithfulness": score}
         except Exception as e:
             warnings.warn(f"RAGAS layer 2 failed for {case['id']}: {e}")
             return {"error": str(e)}

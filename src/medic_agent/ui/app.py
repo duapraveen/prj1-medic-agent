@@ -334,34 +334,75 @@ def _load_golden_cases() -> list[dict]:
     return json.loads(GOLDEN_CASES_PATH.read_text()).get("cases", [])
 
 
+def _judge_label(score: float) -> str:
+    if score >= 4.3:
+        return "Excellent"
+    if score >= 3.6:
+        return "Good"
+    if score >= 3.0:
+        return "Acceptable"
+    if score >= 2.0:
+        return "Fair"
+    return "Poor"
+
+
 def _render_eval_results(results: list) -> None:
     if not results:
         return
     st.divider()
     st.subheader("Results")
+    st.caption("Judge scores use a 1–5 scale: 1 = Poor · 2 = Fair · 3 = Acceptable · 4 = Good · 5 = Excellent")
     baseline = json.loads(BASELINE_PATH.read_text()) if BASELINE_PATH.exists() else {}
-    rows = []
+
     for r in results:
-        delta = ""
+        l1 = "✅ pass" if r.layer1_pass else "❌ fail"
+
+        judge_summary = "—"
+        if r.judge_scores and "overall" in r.judge_scores:
+            overall = r.judge_scores["overall"]
+            judge_summary = f"{overall:.1f}/5 — {_judge_label(overall)}"
+
+        ragas_summary = "—"
+        if r.ragas_scores:
+            if "error" in r.ragas_scores:
+                ragas_summary = f"error: {r.ragas_scores['error'][:40]}"
+            elif "faithfulness" in r.ragas_scores:
+                ragas_summary = f"{r.ragas_scores['faithfulness']:.2f} (0–1 grounding score)"
+
+        delta_str = ""
         if baseline and r.case_id in baseline:
-            diff = (r.judge_scores or {}).get("overall", 0) - baseline[r.case_id].get(
-                "judge_overall", 0
-            )
-            delta = (
-                f"+{diff:.1f} ✅" if diff > 0 else (f"{diff:.1f} 🔴" if diff < -0.3 else f"{diff:.1f} ⚠️")
-            )
-        rows.append({
-            "Case": r.case_id,
-            "L1": "✅" if r.layer1_pass else "❌",
-            "Faithfulness": f"{(r.ragas_scores or {}).get('faithfulness', '—'):.2f}"
-            if r.ragas_scores
-            else "—",
-            "Judge": f"{(r.judge_scores or {}).get('overall', '—'):.1f}"
-            if r.judge_scores
-            else "—",
-            "Δ vs baseline": delta,
-        })
-    st.dataframe(rows, use_container_width=True)
+            diff = (r.judge_scores or {}).get("overall", 0) - baseline[r.case_id].get("judge_overall", 0)
+            delta_str = f"  |  Δ {'+' if diff > 0 else ''}{diff:.1f} vs baseline"
+
+        label = f"**{r.case_id}**  |  L1: {l1}  |  Faithfulness: {ragas_summary}  |  Judge: {judge_summary}{delta_str}"
+        with st.expander(label):
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown("**RAGAS Faithfulness**")
+                if r.ragas_scores and "faithfulness" in r.ragas_scores:
+                    v = r.ragas_scores["faithfulness"]
+                    st.markdown(
+                        f"`{v:.2f}` — measures whether every claim in the response "
+                        f"is supported by the retrieved context (0 = hallucinated, 1 = fully grounded)"
+                    )
+                else:
+                    st.caption(ragas_summary if ragas_summary != "—" else "Not run")
+            with col2:
+                st.markdown("**LLM Judge Scores (1–5)**")
+                if r.judge_scores:
+                    criteria = {k: v for k, v in r.judge_scores.items() if k != "overall"}
+                    for criterion, score in criteria.items():
+                        try:
+                            s = float(score)
+                            bar = "█" * round(s) + "░" * (5 - round(s))
+                            st.caption(f"`{criterion}`: {s:.1f} {bar} — {_judge_label(s)}")
+                        except (TypeError, ValueError):
+                            st.caption(f"`{criterion}`: {score}")
+                    if "overall" in r.judge_scores:
+                        overall = r.judge_scores["overall"]
+                        st.markdown(f"**Overall: {overall:.1f}/5 — {_judge_label(overall)}**")
+                else:
+                    st.caption("Not run")
 
 
 def _render_eval_tab() -> None:
