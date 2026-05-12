@@ -33,6 +33,13 @@ class EvalResult:
     timestamp: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
+    # provenance — populated by run_all() for use in the UI inspector
+    case_input: str = ""
+    case_description: str = ""
+    response: str = ""
+    chunks: list[dict] = field(default_factory=list)
+    judge_prompt: str = ""
+    judge_raw: str = ""
 
 
 class EvalRunner:
@@ -109,7 +116,8 @@ class EvalRunner:
             warnings.warn(f"RAGAS layer 2 failed for {case['id']}: {e}")
             return {"error": str(e)}
 
-    def run_layer3(self, case: dict, response: str) -> dict | None:
+    def run_layer3(self, case: dict, response: str) -> tuple[dict | None, str, str]:
+        """Returns (scores_dict, raw_llm_response, prompt_sent)."""
         criteria = case.get("judge_criteria", {})
         criteria_text = "\n".join(f"- {k}: {v}" for k, v in criteria.items())
         prompt = _build_judge_prompt(case["description"], response, criteria_text)
@@ -124,11 +132,11 @@ class EvalRunner:
             )
             start, end = raw.find("{"), raw.rfind("}") + 1
             if start >= 0 and end > start:
-                return json.loads(raw[start:end])
+                return json.loads(raw[start:end]), raw, prompt
         except Exception as e:
             warnings.warn(f"LLM-as-judge failed for {case['id']}: {e}")
-            return {"error": str(e)}
-        return None
+            return {"error": str(e)}, "", prompt
+        return None, "", prompt
 
     def run_all(self, cases: list[dict], layers: list[int]) -> list[EvalResult]:
         results = []
@@ -140,13 +148,21 @@ class EvalRunner:
                 user_query=case["input"],
                 context=chunks or None,
             )
-            result = EvalResult(case_id=case["id"])
+            result = EvalResult(
+                case_id=case["id"],
+                case_input=case["input"],
+                case_description=case.get("description", ""),
+                response=response,
+                chunks=chunks,
+            )
             if 1 in layers:
                 result.layer1_pass = self.run_layer1(case, response)
             if 2 in layers:
                 result.ragas_scores = self.run_layer2(case, response, chunks)
             if 3 in layers:
-                result.judge_scores = self.run_layer3(case, response)
+                result.judge_scores, result.judge_raw, result.judge_prompt = (
+                    self.run_layer3(case, response)
+                )
             results.append(result)
         return results
 

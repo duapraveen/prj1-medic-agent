@@ -334,6 +334,85 @@ def _load_golden_cases() -> list[dict]:
     return json.loads(GOLDEN_CASES_PATH.read_text()).get("cases", [])
 
 
+@st.dialog("Evidence & Reasoning", width="large")
+def _evidence_dialog(result) -> None:
+    st.caption(f"`{result.case_id}` — {result.case_description}")
+    tab_io, tab_chunks, tab_ragas, tab_judge = st.tabs(
+        ["Input & Output", "Retrieved Chunks", "RAGAS Evidence", "Judge Reasoning"]
+    )
+
+    with tab_io:
+        st.markdown("**Clinical Input**")
+        st.text_area(
+            "input", value=result.case_input, height=220,
+            disabled=True, label_visibility="collapsed", key=f"dlg_input_{result.case_id}"
+        )
+        st.markdown("**Model Response**")
+        st.text_area(
+            "response", value=result.response, height=280,
+            disabled=True, label_visibility="collapsed", key=f"dlg_resp_{result.case_id}"
+        )
+
+    with tab_chunks:
+        if result.chunks:
+            st.caption(f"{len(result.chunks)} chunk(s) retrieved from ChromaDB and injected as context.")
+            for c in result.chunks:
+                with st.expander(f"**{c['source_filename']}** — chunk {c['chunk_index']}"):
+                    st.text(c["text"])
+        else:
+            st.info("No chunks retrieved — knowledge base was empty at eval time.")
+
+    with tab_ragas:
+        if result.ragas_scores and "faithfulness" in result.ragas_scores:
+            score = result.ragas_scores["faithfulness"]
+            st.metric("Faithfulness", f"{score:.3f}", help="0 = fully hallucinated · 1 = fully grounded")
+            st.markdown(
+                "**How RAGAS computes this score:**\n"
+                "1. Decomposes the model response into atomic factual claims\n"
+                "2. For each claim, runs NLI to check whether it can be inferred from the retrieved context\n"
+                "3. Faithfulness = claims supported ÷ total claims\n\n"
+                "A low score here does **not** mean the response is wrong — it means the model drew on "
+                "clinical knowledge beyond what was in the retrieved chunks. For a coding agent, this is "
+                "expected: codes like E11.65 require medical reasoning, not just text extraction."
+            )
+            st.divider()
+            st.markdown("**Context windows sent to RAGAS:**")
+            ctx = [c["text"] for c in result.chunks] if result.chunks else []
+            for i, text in enumerate(ctx):
+                with st.expander(f"Context {i + 1} ({len(text)} chars)"):
+                    st.text(text)
+            st.markdown("**Response evaluated:**")
+            st.text_area(
+                "ragas_resp", value=result.response[:1500], height=160,
+                disabled=True, label_visibility="collapsed", key=f"dlg_rresp_{result.case_id}"
+            )
+        else:
+            st.info("Layer 2 (RAGAS) was not run for this case.")
+
+    with tab_judge:
+        if result.judge_prompt:
+            st.markdown("**Prompt sent to judge model** (`claude-sonnet-4-6`):")
+            st.code(result.judge_prompt, language=None)
+        if result.judge_raw:
+            st.markdown("**Raw judge response (JSON):**")
+            st.code(result.judge_raw, language="json")
+        if result.judge_scores:
+            st.markdown("**Parsed scores:**")
+            criteria = {k: v for k, v in result.judge_scores.items() if k != "overall"}
+            for criterion, score in criteria.items():
+                try:
+                    s = float(score)
+                    bar = "█" * round(s) + "░" * (5 - round(s))
+                    st.caption(f"`{criterion}`: {s:.1f} {bar} — {_judge_label(s)}")
+                except (TypeError, ValueError):
+                    st.caption(f"`{criterion}`: {score}")
+            if "overall" in result.judge_scores:
+                overall = result.judge_scores["overall"]
+                st.markdown(f"**Overall: {overall:.1f}/5 — {_judge_label(overall)}**")
+        if not result.judge_prompt and not result.judge_raw:
+            st.info("Layer 3 (LLM-as-Judge) was not run for this case.")
+
+
 def _judge_label(score: float) -> str:
     if score >= 4.3:
         return "Excellent"
@@ -403,6 +482,11 @@ def _render_eval_results(results: list) -> None:
                         st.markdown(f"**Overall: {overall:.1f}/5 — {_judge_label(overall)}**")
                 else:
                     st.caption("Not run")
+            has_detail = r.response or r.chunks or r.judge_prompt or r.judge_raw
+            if has_detail:
+                st.divider()
+                if st.button("🔍 Inspect — input, chunks, reasoning", key=f"inspect_{r.case_id}"):
+                    _evidence_dialog(r)
 
 
 def _render_eval_tab() -> None:
