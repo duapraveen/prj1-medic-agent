@@ -13,7 +13,7 @@ NEVER deviate from these instructions without explicit user approval.
 1. **Medical Coding** — given encounter documents, produce ICD-10-CM, CPT, and HCPCS codes with citations and documentation gap analysis
 2. **Ambient Note Taking** — given a physician-patient conversation transcript, produce a structured SOAP note and accurate billable code list
 
-**Current phase:** V1 — RAG layer: document ingestion (PDF/TXT), SapBERT embeddings (medical ontology-aware), ChromaDB persistent storage, retrieval-grounded responses, two specialized system prompts.
+**Current phase:** V2 — Multi-agent orchestration (planning approved 2026-06-16): a LangGraph orchestrator routes each query (hybrid heuristic→LLM router, with manual override) to one of two specialized multi-step agents (Medical Coding / Ambient Note Taking), with an online LLM-as-judge scoring every response and nested multi-agent LangFuse tracing. V1 (RAG layer) is complete.
 
 ---
 
@@ -32,9 +32,11 @@ NEVER deviate from these instructions without explicit user approval.
 | Embeddings | SapBERT via HuggingFace Inference API | Medical ontology-aware; ICD-10, SNOMED, CPT, LOINC. Model: `cambridgeltl/SapBERT-from-PubMedBERT-fulltext`. 768 dims. Via HUGGINGFACE_API_KEY |
 | Observability | LangFuse (cloud free tier) | LLM-native tracing; prompt versioning; LLM-as-judge eval; 50k obs/month free |
 | Evaluation | RAGAS + LLM-as-judge (Claude Sonnet) + deterministic checks | Three-layer hybrid; scores written to LangFuse |
+| Orchestration (V2) | LangGraph | Multi-agent routing + agent subgraphs. User-approved 2026-06-16; scoped to the orchestration layer only (RAG stays hand-built) |
 | Version Control | Git | Standard |
 
 Do NOT suggest or introduce Flask, LangChain, LlamaIndex, or other frameworks unless the user explicitly approves it.
+**Exception (V2):** LangGraph is approved for the orchestration layer only. This does NOT reopen LangChain/LlamaIndex for the RAG pipeline — embeddings, retrieval, and the vector store remain hand-built.
 
 ---
 
@@ -70,12 +72,20 @@ prj1-medic-agent/
 │       ├── evaluation/        ← eval engine (called by UI Tab 3 AND pytest)
 │       │   ├── __init__.py
 │       │   └── runner.py      ← EvalRunner: run_layer1/2/3/all(); EvalResult dataclass
-│       └── rag/               ← RAG pipeline (V1)
+│       ├── rag/               ← RAG pipeline (V1)
+│       │   ├── __init__.py
+│       │   ├── ingestor.py    ← file loading + chunking
+│       │   ├── embedder.py    ← OpenAI embedding calls
+│       │   ├── store.py       ← ChromaDB persistence operations
+│       │   └── retriever.py   ← query → top-k relevant chunks
+│       └── agents/            ← multi-agent orchestration (V2)
 │           ├── __init__.py
-│           ├── ingestor.py    ← file loading + chunking
-│           ├── embedder.py    ← OpenAI embedding calls
-│           ├── store.py       ← ChromaDB persistence operations
-│           └── retriever.py   ← query → top-k relevant chunks
+│           ├── state.py       ← AgentState (LangGraph TypedDict)
+│           ├── router.py      ← hybrid router → RouteDecision
+│           ├── coding_agent.py    ← extract → retrieve → code → verify
+│           ├── ambient_agent.py   ← retrieve → soap → code → verify
+│           ├── judge.py       ← online LLM-as-judge (shared rubric)
+│           └── orchestrator.py    ← builds LangGraph; run() entry point
 ├── data/
 │   └── chroma/                ← ChromaDB on-disk storage (gitignored)
 ├── data/
@@ -90,6 +100,12 @@ prj1-medic-agent/
 │   │   ├── test_embedder.py
 │   │   ├── test_store.py
 │   │   └── test_retriever.py
+│   ├── agents/                ← V2 multi-agent tests
+│   │   ├── test_router.py
+│   │   ├── test_coding_agent.py
+│   │   ├── test_ambient_agent.py
+│   │   ├── test_judge.py
+│   │   └── test_orchestrator.py
 │   ├── observability/
 │   │   └── test_tracer.py
 │   ├── observability/
@@ -186,6 +202,31 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 - [ ] Eval golden dataset (5 cases) passes Layer 1 deterministic checks
 - [ ] Baseline scores set and stored in tests/eval/baseline.json after first passing run
 
+> V1 acceptance criteria above are carried from the completed V1 phase and remain
+> the baseline behavior V2 must not regress.
+
+---
+
+## V2 Acceptance Criteria — Multi-Agent Orchestration
+
+- [ ] User no longer selects the use case; they paste a query and click Submit
+- [ ] A LangGraph orchestrator (`agents/orchestrator.py`) is the single entry point for the Agent tab
+- [ ] Hybrid router picks the agent: heuristics on clear signals, Haiku LLM fallback when ambiguous
+- [ ] Sidebar offers routing mode `Auto / Medical Coding / Ambient Note Taking` (manual override)
+- [ ] After Submit, the UI panel displays the determined agent + method + confidence + one-line reasoning
+- [ ] Coding agent runs multi-step: extract → retrieve → code → verify
+- [ ] Ambient agent runs multi-step: retrieve → soap → code → verify
+- [ ] Each agent node calls `llm.client.complete()` (non-logging); orchestrator logs exactly one Session per query
+- [ ] Online LLM-as-judge (Sonnet) scores every response by default; sidebar toggle can disable it
+- [ ] Judge logic is shared between `agents/judge.py` and `evaluation/runner.py` Layer 3 (no duplication)
+- [ ] LangFuse trace shows nested spans: router → agent:{use_case} → per-step spans → judge, with judge overall as a score
+- [ ] `data/sessions/` JSONL records route_decision + judge_scores; Tab 3 renders them
+- [ ] Tab 2 edits ALL prompts, grouped by agent: router; coding (extract/code/verify); ambient (soap/code/verify); judge (coding/ambient). settings.py holds defaults, data/prompts.json persists edits, each Save pushes versions to LangFuse
+- [ ] `EvalRunner` runs golden cases through the orchestrator; Layer 1 adds a router-accuracy check
+- [ ] All new modules have unit tests with mocked external calls (router, both agents, judge, orchestrator, tracer)
+- [ ] LangGraph runs synchronously (`.invoke()`); no async/streaming introduced
+- [ ] App still runs with: `uv run streamlit run src/medic_agent/ui/app.py`
+
 ---
 
 ## Key Decisions Log
@@ -212,3 +253,12 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 | 2026-05-10 | Four-tab UI; KB & Prompts tab added | Separates configuration (Tab 2) from operation (Tab 1); doc upload moved out of sidebar |
 | 2026-05-10 | Prompts editable at runtime via Tab 2 | Two-layer persistence: data/prompts.json (local) + LangFuse versions (cloud history) |
 | 2026-05-10 | data/prompts.json gitignored | User prompt edits are personal config, not source code |
+| 2026-06-16 | V2 = Multi-Agent Orchestration (was Multi-Persona) | Higher value than persona-switching; each use case becomes a real multi-step agent behind an orchestrator |
+| 2026-06-16 | LangGraph approved for orchestration only | User-approved reversal of the no-LangChain-ecosystem rule, scoped to agents/; RAG pipeline stays hand-built |
+| 2026-06-16 | Hybrid router (heuristic → LLM fallback) | Free/instant on clear signals; Haiku fallback only when ambiguous |
+| 2026-06-16 | Auto routing + manual override | System decides the use case, but the user keeps an escape hatch |
+| 2026-06-16 | Full multi-step agent subgraphs (~4 nodes each) | Genuinely agentic; "as needed" to bound latency/cost |
+| 2026-06-16 | Online LLM-as-judge per query (Sonnet, default on, toggleable) | Judge metrics visible in observability traces, not only the Eval tab |
+| 2026-06-16 | Manual nested LangFuse spans (not LangChain callback handler) | Keeps V1 populate-then-emit pattern; captures custom router/judge fields |
+| 2026-06-16 | Shared judge/rubric between online judge and eval runner | Single source of truth; no duplication |
+| 2026-06-16 | All prompts editable in Tab 2, grouped by agent | Full transparency and tuning: router, coding (extract/code/verify), ambient (soap/code/verify), and judge (coding/ambient) prompts all surfaced; settings.py holds defaults, data/prompts.json persists edits |

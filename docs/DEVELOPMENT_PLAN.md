@@ -1,7 +1,7 @@
 # Development Plan — medic-agent
 
-**Version:** 0.1  
-**Last Updated:** 2026-05-09  
+**Version:** 0.8  
+**Last Updated:** 2026-06-16  
 
 ---
 
@@ -16,11 +16,17 @@ Never build infrastructure before you have something working that needs it.
 ## Phase Overview
 
 ```
-Phase 0 (V0): Core Loop        ← COMPLETE ✅
-Phase 1 (V1): Context Layer    ← COMPLETE ✅
-Phase 2 (V2): Multi-Persona    ← YOU ARE HERE (not started)
-Phase 3 (V3): Production-Ready ← Future
+Phase 0 (V0): Core Loop             ← COMPLETE ✅
+Phase 1 (V1): Context Layer         ← COMPLETE ✅
+Phase 2 (V2): Multi-Agent Orchestr. ← YOU ARE HERE (planning approved)
+Phase 3 (V3): Production-Ready      ← Future
 ```
+
+> **Phase 2 redefinition (2026-06-16):** V2 was originally scoped as
+> "Multi-Persona" (clinician / admin / patient). It is now redefined as
+> **Multi-Agent Orchestration**: each use case becomes its own multi-step
+> agent, and a hybrid orchestrator routes each query to the right agent
+> automatically (with a manual override). See Phase 2 below.
 
 ---
 
@@ -213,17 +219,118 @@ Restructure into four tabs:
 
 ---
 
-## Phase 2 — Multi-Persona (V2)
+## Phase 2 — Multi-Agent Orchestration (V2)
 
-> Do not begin V2 until V1 is complete and tested.
+> Do not begin V2 until V1 is complete and tested. (V1 complete ✅ 2026-05-10)
 
-**Goal:** Agent adapts behavior based on who is asking (clinician / admin / patient).
+**Goal:** Turn the two use cases into two specialized **multi-step agents** and
+put a **hybrid orchestrator** in front of them that reads the raw user query and
+routes to the correct agent automatically. The UI no longer asks the user to pick
+the use case; instead it displays which agent the system selected, why, and how
+confidently. Every response is scored online by an LLM-as-judge, and all of it —
+routing, each agent step, and judge scores — is captured as nested LangFuse spans.
 
-### Planned Steps (to be detailed when V2 begins)
-- [ ] Define persona profiles and their system prompts
-- [ ] Add persona selector to UI
-- [ ] Route queries through persona-appropriate context
-- [ ] [PLACEHOLDER]
+**Success:** Paste a coding encounter → system routes to the Coding agent, runs
+extract→retrieve→code→verify, shows the determined agent + reasoning + judge
+scores. Paste a conversation transcript → system routes to the Ambient agent,
+runs retrieve→SOAP→code→verify. A manual override forces a specific agent.
+
+### Design Decisions (locked 2026-06-16)
+
+| Decision | Choice | Reason |
+|---|---|---|
+| Orchestration framework | LangGraph | User-approved; reverses the earlier "no LangChain ecosystem" rule for the orchestration layer only |
+| Router | Hybrid: heuristics first, LLM (Haiku) fallback | Cheap and instant in the common case; robust when ambiguous |
+| User control | Auto routing + manual override (Auto / Coding / Ambient) | Escape hatch when the router is wrong |
+| Agent shape | Full multi-step subgraphs (extract/retrieve/code/verify etc.) | Genuinely agentic; "as needed" — lean, not maximal |
+| Online eval | LLM-as-judge (Sonnet) scores every response, default on (toggleable) | User wants judge metrics visible in observability traces |
+| Tracing | Manual nested spans, populated then emitted by tracer.py | Matches existing pattern; captures custom router + judge data |
+| Prompt editing | ALL prompts editable in Tab 2, grouped by agent (router / coding / ambient / judge) | Full transparency and tuning; settings.py holds defaults, data/prompts.json persists |
+
+### Architecture (summary — see ARCHITECTURE.md §14 for full detail)
+
+```
+START → router → (conditional edge) → coding_agent ─┐
+                                    → ambient_agent ─┴→ judge → END
+```
+
+New package `src/medic_agent/agents/`:
+- `state.py` — `AgentState` (LangGraph TypedDict) shared across nodes
+- `router.py` — hybrid router → `RouteDecision{use_case, method, confidence, reasoning}`
+- `coding_agent.py` — nodes: extract → retrieve → code → verify
+- `ambient_agent.py` — nodes: retrieve → soap → code → verify
+- `judge.py` — online LLM-as-judge (shares rubric with `evaluation/runner.py`)
+- `orchestrator.py` — builds the graph; single entry point `run(query, model_id, override)`
+
+### Step 2.1 — Dependencies & Scaffolding
+- [ ] `uv add langgraph` (pulls in `langchain-core`)
+- [ ] Create `src/medic_agent/agents/__init__.py` and `tests/agents/__init__.py`
+- [ ] Verify: `uv run python -c "import langgraph; print('OK')"`
+
+### Step 2.2 — Agent State & Non-Logging LLM Primitive
+- [ ] `agents/state.py`: `AgentState` TypedDict — `query, model_id, override, route, use_case, chunks, scratch (per-step intermediates), response, judge_scores, agent_steps`
+- [ ] `llm/client.py`: add `complete(model_id, system_prompt, user_query, context=None) -> tuple[str, dict]` — returns `(text, token_usage)`, **does not** log a Session (agent nodes call this; the orchestrator logs one Session per query). `ask()` stays unchanged for V0 tests.
+- [ ] Verify: `complete()` returns text + usage without writing to `data/sessions/`
+
+### Step 2.3 — Hybrid Router (`agents/router.py`)
+- [ ] `RouteDecision` dataclass: `{use_case, method, confidence, reasoning}`
+- [ ] `heuristic_route(query) -> RouteDecision | None` — dialogue markers / coding keywords; `None` when ambiguous
+- [ ] `llm_route(query, model_id) -> RouteDecision` — Haiku classifier returning use_case + confidence + reasoning
+- [ ] `route(query, model_id, override) -> RouteDecision` — override → `method="manual"`; else heuristic, then LLM fallback
+- [ ] Add `ROUTER_SYSTEM_PROMPT` to `settings.py`
+- [ ] Tests: heuristic hits both ways, ambiguous → None, mocked LLM fallback, override path
+
+### Step 2.4 — Coding Agent Subgraph (`agents/coding_agent.py`)
+- [ ] Nodes: `extract` (diagnoses/procedures) → `retrieve` (entity-aware top-5) → `code` (ICD-10/CPT with citations + gaps; uses editable coding prompt) → `verify` (self-check every code is doc-supported; finalize)
+- [ ] Add `CODING_EXTRACT_PROMPT`, `CODING_VERIFY_PROMPT` to `settings.py`
+- [ ] Each node appends a step record to `state["agent_steps"]`
+- [ ] Tests: each node with mocked `complete()` + mocked `retrieve()`
+
+### Step 2.5 — Ambient Agent Subgraph (`agents/ambient_agent.py`)
+- [ ] Nodes: `retrieve` (coding references) → `soap` (draft SOAP from transcript; uses editable ambient prompt) → `code` (billing codes from Assessment) → `verify` (faithfulness/section self-check + documentation flags; finalize)
+- [ ] Add `AMBIENT_CODE_PROMPT`, `AMBIENT_VERIFY_PROMPT` to `settings.py`
+- [ ] Tests: each node with mocked `complete()` + mocked `retrieve()`
+
+### Step 2.6 — Online Judge (`agents/judge.py`) + Shared Rubric
+- [ ] Extract Layer-3 judge logic from `evaluation/runner.py` into a shared function (rubric per use case, JSON parsing)
+- [ ] `judge_output(use_case, query, response, chunks, model_id="sonnet") -> dict` — per-dimension + overall + reasoning
+- [ ] `evaluation/runner.py` Layer 3 now calls the shared function (no duplication)
+- [ ] Tests: mocked judge call, JSON parse, both rubrics
+
+### Step 2.7 — Orchestrator Graph (`agents/orchestrator.py`)
+- [ ] Build `StateGraph`: `router → conditional(use_case) → {coding_agent | ambient_agent} → judge → END`
+- [ ] `run(query, model_id, override="Auto", judge_on=True) -> dict` — returns `{route, response, chunks, judge_scores, agent_steps}`
+- [ ] Populate the enriched `Session` and call `log_session()` once
+- [ ] Tests: routing dispatches to correct agent; manual override respected; judge toggle off skips judge
+
+### Step 2.8 — Enhanced Multi-Agent Tracing (`observability/tracer.py`)
+- [ ] `Session` new fields: `route_decision: dict`, `agent_steps: list[dict]`, `judge_scores: dict`
+- [ ] Emit nested spans: `router` span, `agent:{use_case}` span containing one span per agent step (generation/retriever), `judge` span; attach judge `overall` as a LangFuse score
+- [ ] Local JSONL captures route_decision + judge_scores for Tab 3
+- [ ] Tests: mocked LangFuse, assert nested structure + judge score attached
+
+### Step 2.9 — UI Updates (`ui/app.py`)
+- [ ] Sidebar: replace use-case radio with **routing mode** selectbox (`Auto / Medical Coding / Ambient Note Taking`) + judge on/off toggle
+- [ ] Tab 1: single generic input area; on Submit call `orchestrator.run(...)`
+- [ ] **Routing panel** after Submit: *Determined agent · method (heuristic/llm/manual) · confidence · one-line reasoning*
+- [ ] Show response + sources + judge scores inline
+- [ ] **Tab 2: expand to all prompts**, grouped by agent (Router; Coding: extract/code/verify; Ambient: soap/code/verify; Judge: coding/ambient)
+  - [ ] Migrate `data/prompts.json` to nested V2 schema (`router`, `coding.{extract,code,verify}`, `ambient.{soap,code,verify}`, `judge.{coding,ambient}`); missing key → settings.py default
+  - [ ] `_load_prompts` / `_save_prompts` handle the nested schema; Save still bumps version + pushes each prompt to LangFuse
+  - [ ] Reset to Defaults restores all step prompts from settings.py
+- [ ] Tab 3 (Observability): add route decision + judge overall to session rows and summary
+- [ ] Verify: coding flow, ambient flow, a forced override, and editing a step prompt then re-running all work end-to-end
+
+### Step 2.10 — Evaluation Integration
+- [ ] `EvalRunner` runs cases through `orchestrator.run()` (full pipeline under eval)
+- [ ] Layer 1: add **router-accuracy** check (golden cases carry known `use_case`)
+- [ ] Update `golden_cases.json` only if needed; refresh `baseline.json` after a passing run
+- [ ] Verify: `uv run pytest tests/eval/ -v -m eval`
+
+### Step 2.11 — Tests & Acceptance
+- [ ] All unit tests pass with `uv run pytest` (external calls mocked)
+- [ ] V2 acceptance criteria in `CLAUDE.md` all checked
+- [ ] Commit each step with descriptive messages
 
 ---
 
@@ -269,3 +376,4 @@ Restructure into four tabs:
 | 0.5 | 2026-05-10 | Three-tab UI in Step 1.8; EvalRunner module in Step 1.10; user workflows documented |
 | 0.6 | 2026-05-10 | Four-tab UI; KB & Prompts tab in Step 1.8; prompt persistence design |
 | 0.7 | 2026-05-10 | V1 marked complete; all Step 1.1–1.10 items checked off |
+| 0.8 | 2026-06-16 | Phase 2 redefined: Multi-Persona → Multi-Agent Orchestration; LangGraph, hybrid router, multi-step agents, online judge; Steps 2.1–2.11 detailed |

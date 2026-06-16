@@ -1,8 +1,8 @@
 # Architecture Document — medic-agent
 
-**Version:** 0.2  
+**Version:** 0.7  
 **Status:** Active  
-**Last Updated:** 2026-05-09  
+**Last Updated:** 2026-06-16  
 
 ---
 
@@ -493,7 +493,188 @@ LangFuse Prompt Registry    ← versioned prompt history (v1, v2, v3...)
 
 ---
 
-## 11. Revision History
+## 14. V2 Architecture — Multi-Agent Orchestration
+
+V2 replaces the user-selected use case with an **orchestrator** that reads the raw
+query and routes it to one of two specialized **multi-step agents**. Built on
+**LangGraph** (user-approved; see §15). The single-shot `ask()` path from V1 is
+kept for V0 tests, but the Agent tab now runs through the orchestrator.
+
+### 14.1 Graph Topology
+
+```
+                       ┌───────────────────────────────┐
+   user query  ─────►  │   orchestrator.run(query,      │
+   + model + override  │     model_id, override,        │
+                       │     judge_on)                  │
+                       └───────────────┬───────────────┘
+                                       ▼
+                              ┌─────────────────┐
+                              │  router (node)  │  hybrid: heuristic → LLM fallback
+                              └────────┬────────┘
+                          use_case     │   (manual override short-circuits)
+                   ┌──────────────────┴──────────────────┐
+                   ▼                                      ▼
+        ┌────────────────────┐                 ┌────────────────────┐
+        │  coding_agent      │                 │  ambient_agent     │
+        │  extract           │                 │  retrieve          │
+        │   → retrieve       │                 │   → soap           │
+        │   → code           │                 │   → code           │
+        │   → verify         │                 │   → verify         │
+        └─────────┬──────────┘                 └─────────┬──────────┘
+                  └──────────────────┬──────────────────┘
+                                     ▼
+                            ┌─────────────────┐
+                            │  judge (node)   │  LLM-as-judge, Sonnet, default on
+                            └────────┬────────┘
+                                     ▼
+                                    END
+                       (returns route, response, chunks,
+                        judge_scores, agent_steps)
+```
+
+### 14.2 New Package — `src/medic_agent/agents/`
+
+| Module | Responsibility | Depends on |
+|---|---|---|
+| `state.py` | `AgentState` TypedDict shared across all nodes | — |
+| `router.py` | Hybrid routing → `RouteDecision{use_case, method, confidence, reasoning}` | `llm.client.complete`, `settings` |
+| `coding_agent.py` | Coding subgraph nodes: extract → retrieve → code → verify | `llm.client.complete`, `rag.retriever`, `settings` |
+| `ambient_agent.py` | Ambient subgraph nodes: retrieve → soap → code → verify | `llm.client.complete`, `rag.retriever`, `settings` |
+| `judge.py` | Online LLM-as-judge; shares rubric with `evaluation/runner.py` | `llm.client.complete`, `settings` |
+| `orchestrator.py` | Builds the LangGraph; entry point `run(...)`; logs one Session | all of the above, `observability.tracer` |
+
+`AgentState` fields: `query, model_id, override, route, use_case, chunks,
+scratch (per-step intermediates), response, judge_scores, agent_steps`.
+
+### 14.3 Router (Hybrid)
+
+```
+route(query, model_id, override)
+  ├─ override != "Auto"     → RouteDecision(method="manual",  confidence=1.0)
+  ├─ heuristic_route(query) → RouteDecision(method="heuristic") if a strong signal
+  │     • ambient signals: speaker markers (Doctor:/Patient:/Dr./PT:), multi-turn dialogue
+  │     • coding signals:  "ICD", "CPT", "code this encounter", "billing codes for"
+  └─ else llm_route(query)  → RouteDecision(method="llm") — Haiku classifier
+                              returns {use_case, confidence, reasoning}
+```
+
+`reasoning` and `method`/`confidence` are surfaced in the Tab 1 routing panel and
+logged to LangFuse.
+
+### 14.4 Agents (Multi-Step Subgraphs)
+
+**Coding agent** — `extract` pulls documented diagnoses/procedures; `retrieve`
+does entity-aware top-5 retrieval; `code` assigns ICD-10-CM/CPT with citations and
+documentation gaps (uses the editable coding prompt); `verify` self-checks that
+every code is supported by the documentation and finalizes the formatted output.
+
+**Ambient agent** — `retrieve` pulls coding-reference context; `soap` drafts the
+SOAP note from the transcript (uses the editable ambient prompt); `code` assigns
+billing codes from the Assessment; `verify` self-checks faithfulness/section
+completeness, adds documentation flags, and finalizes.
+
+Each node appends a step record `{name, type, model_id, token_usage, latency_ms,
+input_summary, output_summary}` to `state["agent_steps"]` for tracing.
+
+### 14.5 Online LLM-as-Judge
+
+`judge.py` scores every response (default on; sidebar toggle for cost control)
+against the rubrics in §13. Judge model is **Sonnet** (smarter than the system
+under test, per the locked decision). The Layer-3 judge logic in
+`evaluation/runner.py` is refactored into a shared function that both the online
+judge and the eval runner call — single source of truth, no duplication. The
+`overall` score is attached to the LangFuse trace as a score and shown in Tab 3.
+
+### 14.6 Multi-Agent Tracing
+
+Nodes write structured step records into the `Session`; `tracer.py` emits one
+nested trace per query (populate-then-emit, matching V1):
+
+```
+LangFuse Trace: medic-agent-query
+├── span: router            input=query, output=route_decision
+├── span: agent:{use_case}
+│   ├── span: extract        (generation)  ← coding only
+│   ├── span: retrieval      (retriever)
+│   ├── span: code | soap     (generation)
+│   └── span: verify         (generation)
+└── span: judge             (generation), output=judge_scores
+    └── score: judge_overall attached to the trace
+
+Session metadata: session_id, timestamp, use_case (determined),
+route_decision{method,confidence,reasoning}, model_id, error
+```
+
+New `Session` fields: `route_decision: dict`, `agent_steps: list[dict]`,
+`judge_scores: dict`. The local JSONL fallback also records routing + judge data
+so Tab 3 can render them without LangFuse.
+
+### 14.7 LLM Client Change
+
+`llm/client.py` gains `complete(model_id, system_prompt, user_query, context=None)
+-> tuple[str, dict]` — a non-logging primitive returning `(text, token_usage)`.
+Agent nodes call `complete()` (so a multi-step query does not produce N Sessions);
+the orchestrator logs exactly one Session. `ask()` is unchanged.
+
+### 14.8 UI & Eval Impact
+
+- **Sidebar:** use-case radio → routing-mode selectbox (`Auto / Medical Coding /
+  Ambient Note Taking`) + judge on/off toggle.
+- **Tab 1:** single generic input; routing panel shows determined agent + method +
+  confidence + reasoning; response + sources + judge scores below.
+- **Tab 2:** expanded — edits **all** prompts, grouped by agent. `settings.py`
+  holds the defaults (factory reset); `data/prompts.json` persists edits; each Save
+  versions them in LangFuse. Layout:
+  - *Router:* `router`
+  - *Medical Coding Agent:* `extract`, `code`, `verify`
+  - *Ambient Agent:* `soap`, `code`, `verify`
+  - *Judge:* `coding`, `ambient`
+
+  `data/prompts.json` schema (V2):
+  ```json
+  {
+    "version": 3,
+    "saved_at": "2026-06-16T...",
+    "router": "...",
+    "coding":  { "extract": "...", "code": "...", "verify": "..." },
+    "ambient": { "soap": "...", "code": "...", "verify": "..." },
+    "judge":   { "coding": "...", "ambient": "..." }
+  }
+  ```
+  Agent nodes and the router/judge load their prompt from `prompts.json`, falling
+  back to the `settings.py` default. (This redefines the V1 flat
+  `{coding, ambient}` schema; `prompts.json` is gitignored user config, so no
+  back-compat shim per the project rules — a missing key falls back to defaults.)
+- **Tab 3:** session rows gain route decision + judge overall.
+- **Eval:** `EvalRunner` runs cases through `orchestrator.run()`; Layer 1 adds a
+  router-accuracy check against each golden case's known `use_case`.
+
+---
+
+## 15. V2 Decisions — Rationale
+
+| Decision | Choice | Why this, not that |
+|---|---|---|
+| Orchestration framework | **LangGraph** | User explicitly approved it for the orchestration layer. This is a deliberate, logged reversal of the project's "no LangChain ecosystem" rule (§5) — scoped to orchestration only; the RAG pipeline stays hand-built. |
+| Routing strategy | **Hybrid** (heuristic → LLM fallback) | Free/instant when the query has a clear signal; Haiku fallback only when ambiguous. Pure-LLM wastes a call on obvious cases; pure-heuristic is brittle. |
+| User control | **Auto + manual override** | Matches the "system decides" goal while keeping an escape hatch when the router is wrong. |
+| Agent shape | **Full multi-step subgraphs** | User wants genuinely agentic behavior, not prompt-swapping. Kept lean ("as needed", ~4 nodes each) to bound latency/cost. |
+| Online evaluation | **LLM-as-judge per query, Sonnet, default on** | User wants judge metrics visible in observability traces, not just in the Eval tab. Toggleable to control cost. |
+| Tracing approach | **Manual nested spans** (not LangChain callback handler) | Keeps the V1 populate-then-emit pattern, captures custom router/judge fields, and avoids coupling traces to callback internals. |
+| Judge/rubric reuse | **Shared function** between online judge and eval runner | Single source of truth for rubrics and scoring. |
+| Prompt editing scope | **All prompts editable in Tab 2**, grouped by agent | Full transparency and tuning across router, agent steps, and judge; `settings.py` holds defaults, `data/prompts.json` persists edits. |
+
+**Latency/cost note:** a query is now up to ~6 LLM calls (router fallback + 4
+agent steps + judge) vs. 1 in V1. On Haiku this is cheap; on Opus it is material.
+The heuristic-first router and the judge toggle are the mitigations.
+
+**Synchronous compliance:** LangGraph runs via `.invoke()` synchronously — the
+"no async/streaming" rule (CLAUDE.md) still holds.
+
+---
+
+## 16. Revision History
 
 | Version | Date | Change |
 |---|---|---|
@@ -503,3 +684,4 @@ LangFuse Prompt Registry    ← versioned prompt history (v1, v2, v3...)
 | 0.4 | 2026-05-09 | Specialized to coding + ambient; SapBERT replaces OpenAI embeddings; two system prompts added |
 | 0.5 | 2026-05-10 | Three-tab UI design; evaluation runner architecture; user workflows for obs+eval |
 | 0.6 | 2026-05-10 | Four-tab UI; Knowledge Base & Prompts tab; prompt persistence design |
+| 0.7 | 2026-06-16 | V2 multi-agent orchestration: LangGraph topology, agents package, hybrid router, online judge, multi-agent tracing (§14–15) |
