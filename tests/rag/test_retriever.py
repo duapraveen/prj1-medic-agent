@@ -3,7 +3,8 @@ import uuid
 import chromadb
 import pytest
 
-from medic_agent.rag.retriever import retrieve
+import medic_agent.rag.retriever as retriever_module
+from medic_agent.rag.retriever import graph_retrieve, retrieve
 
 HIDDEN_DIM = 768
 FAKE_EMBEDDING = [0.1] * HIDDEN_DIM
@@ -86,3 +87,47 @@ def test_retrieve_passes_query_to_embedder(mocker, mock_embed):
     mocker.patch(RETRIEVER_GET_COLLECTION, return_value=_populated_collection(3))
     retrieve("ICD-10 codes for hypertension")
     mock_embed.assert_called_once_with("ICD-10 codes for hypertension")
+
+
+# --- graph_retrieve ---
+
+def test_graph_retrieve_returns_empty_for_empty_list():
+    result = graph_retrieve([])
+    assert result == []
+
+
+def test_graph_retrieve_formats_entity_context_as_chunk(mocker):
+    mocker.patch.object(
+        retriever_module.graph_store,
+        "get_related_entities",
+        return_value=[{"text": "Type 2 diabetes", "entity_type": "Diagnosis", "filename": "enc.pdf"}],
+    )
+    result = graph_retrieve(["Type 2 diabetes"])
+    assert len(result) == 1
+    assert result[0]["source_filename"] == "[knowledge-graph]"
+    assert result[0]["chunk_index"] == -1
+    assert "Type 2 diabetes" in result[0]["text"]
+    assert "enc.pdf" in result[0]["text"]
+
+
+def test_graph_retrieve_returns_empty_when_no_graph_matches(mocker):
+    mocker.patch.object(
+        retriever_module.graph_store, "get_related_entities", return_value=[]
+    )
+    result = graph_retrieve(["unknown entity"])
+    assert result == []
+
+
+def test_graph_retrieve_groups_multiple_docs_per_entity(mocker):
+    mocker.patch.object(
+        retriever_module.graph_store,
+        "get_related_entities",
+        return_value=[
+            {"text": "Hypertension", "entity_type": "Diagnosis", "filename": "a.pdf"},
+            {"text": "Hypertension", "entity_type": "Diagnosis", "filename": "b.pdf"},
+        ],
+    )
+    result = graph_retrieve(["Hypertension"])
+    assert len(result) == 1
+    assert "a.pdf" in result[0]["text"]
+    assert "b.pdf" in result[0]["text"]
