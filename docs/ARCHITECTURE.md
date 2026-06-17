@@ -1,6 +1,6 @@
 # Architecture Document — medic-agent
 
-**Version:** 0.7  
+**Version:** 0.8  
 **Status:** Active  
 **Last Updated:** 2026-06-16  
 
@@ -674,6 +674,131 @@ The heuristic-first router and the judge toggle are the mitigations.
 
 ---
 
+## 17. V3 Architecture — Knowledge Graph Layer
+
+V3 adds a **Kuzu embedded knowledge graph** alongside ChromaDB. The two stores answer different questions: ChromaDB answers "what chunks are semantically similar to this query?"; Kuzu answers "what entities exist across my documents and how are they related?". Both run locally with no server.
+
+### 17.1 Why a Knowledge Graph
+
+Vector similarity alone cannot capture cross-document entity relationships. For medical coding, this matters when:
+- A patient's prior diagnosis in document A is relevant to coding in document B
+- A medication mentioned in a discharge summary relates to a diagnosis in a progress note
+- The same ICD-10 entity appears under different surface forms across documents (semantic linking)
+
+The graph makes these relationships explicit and traversable.
+
+### 17.2 New and Modified Components
+
+| Component | Change | Responsibility |
+|---|---|---|
+| `rag/graph_store.py` | **New** | Kuzu schema init, node/edge CRUD, entity query |
+| `rag/entity_extractor.py` | **New** | LLM (Haiku) → JSON entity list from chunk text |
+| `rag/store.py` | Modified | `add_document()` also extracts + upserts entities; `delete_document()` also prunes graph |
+| `rag/retriever.py` | Modified | Adds `graph_retrieve(entity_texts)` function |
+| `agents/coding_agent.py` | Modified | `retrieve_node` merges vector + graph chunks |
+| `agents/ambient_agent.py` | Modified | `retrieve_node` extracts entities from transcript then merges vector + graph chunks |
+| `config/settings.py` | Modified | Adds `KUZU_PERSIST_DIR`, `ENTITY_EXTRACTOR_MODEL_ID` |
+
+### 17.3 Kuzu Graph Schema
+
+```
+Nodes
+  Document(id STRING PRIMARY KEY, filename STRING, ingested_at STRING)
+  Entity(id STRING PRIMARY KEY, text STRING, entity_type STRING)
+    entity_type ∈ {Diagnosis, Medication, Procedure, Finding, Anatomy, Provider}
+
+Edges
+  (Entity)-[:APPEARS_IN {chunk_id STRING, chunk_index INT64}]->(Document)
+```
+
+Entity ID is `MD5(text.lower().strip())` so the same entity text across multiple documents maps to one node — cross-document linking is automatic.
+
+### 17.4 Ingest Flow (Modified)
+
+```
+UPLOAD FLOW (V3)
+──────────────────────────────────────────────────────────────
+User uploads file (PDF / TXT)
+        │
+        ▼
+┌───────────────────┐    ┌───────────────────┐    ┌──────────────────────┐
+│  rag/ingestor.py  │───►│  rag/embedder.py  │───►│  rag/store.py        │
+│  Parse + chunk    │    │  SapBERT embed    │    │  ChromaDB write      │
+└───────────────────┘    └───────────────────┘    └──────────┬───────────┘
+                                                             │ (after ChromaDB write)
+                                                             ▼
+                                                  ┌──────────────────────┐
+                                                  │ entity_extractor.py  │
+                                                  │ Haiku LLM per chunk  │
+                                                  │ → JSON entity list   │
+                                                  └──────────┬───────────┘
+                                                             │ entities
+                                                             ▼
+                                                  ┌──────────────────────┐
+                                                  │ graph_store.py       │
+                                                  │ Kuzu upsert nodes    │
+                                                  │ + APPEARS_IN edges   │
+                                                  │ data/kuzu/ (disk)    │
+                                                  └──────────────────────┘
+```
+
+### 17.5 Query Flow — Hybrid Retrieval (Modified)
+
+```
+QUERY FLOW (V3)
+──────────────────────────────────────────────────────────────
+Agent retrieve_node receives: query + entities (from prior extract step)
+        │
+        ├─ Path A: SapBERT embed → ChromaDB top-K  (existing)
+        │
+        └─ Path B: entity_texts → Kuzu traversal   (new)
+                   MATCH (e:Entity)-[:APPEARS_IN]->(d:Document)
+                   WHERE e.text IN [entities]
+                   RETURN entity + document context
+                         │
+                   format as one synthetic chunk:
+                   "Knowledge graph entity context:
+                    - Type 2 diabetes (Diagnosis) → documented in: enc.pdf, history.txt
+                    - Metformin 500mg (Medication) → documented in: enc.pdf"
+        │
+        └─ Merge path A + path B → combined chunks → LLM context
+```
+
+### 17.6 Entity Extractor
+
+`entity_extractor.extract_entities(chunk_text: str) -> list[dict]`:
+
+- Calls `complete(ENTITY_EXTRACTOR_MODEL_ID, _SYSTEM_PROMPT, chunk_text[:2000])`
+- Returns `[{"text": "...", "entity_type": "..."}]`
+- Strips markdown fences, parses JSON
+- Returns `[]` on any parse failure — never raises; a malformed entity extraction does not break ingest
+
+Model: `ENTITY_EXTRACTOR_MODEL_ID` defaults to Claude Haiku (fast, cheap). Every chunk at ingest time costs one Haiku call; queries pay nothing extra.
+
+### 17.7 Kuzu Tool Stack
+
+| Property | Value |
+|---|---|
+| Package | `kuzu>=0.6` |
+| Deployment | Embedded (in-process), like ChromaDB |
+| Storage | Persistent at `data/kuzu/` (gitignored) |
+| Query language | openCypher (same as Neo4j; portable) |
+| License | MIT |
+| Visual inspection | `uvx kuzu-explorer data/kuzu/` → `localhost:8000` |
+
+### 17.8 V3 Decisions
+
+| Decision | Choice | Why this |
+|---|---|---|
+| Graph DB | Kuzu (embedded) over Neo4j | Neo4j requires a JVM server process; Kuzu is in-process like ChromaDB — matches the "local, no server" constraint |
+| Dual-store | Kuzu + ChromaDB (not replace) | Vector similarity and entity graph traversal answer different questions; neither replaces the other |
+| Entity extraction timing | At ingest (Haiku per chunk) | Front-load cost at upload; retrieval path pays no extra LLM calls |
+| Entity ID strategy | `MD5(text.lower())` | Same entity text across documents shares one graph node → cross-document relationships emerge automatically |
+| Hybrid merge | Concatenate graph chunks after vector chunks | Simple; LLM receives both without special scoring; deduplication deferred to future iteration |
+| No RELATED_TO edges (V3) | Entity-to-document only | RELATED_TO extraction (drug-condition, procedure-diagnosis) adds extraction complexity; entity-to-document linking is already high-value and keeps the schema minimal |
+
+---
+
 ## 16. Revision History
 
 | Version | Date | Change |
@@ -685,3 +810,4 @@ The heuristic-first router and the judge toggle are the mitigations.
 | 0.5 | 2026-05-10 | Three-tab UI design; evaluation runner architecture; user workflows for obs+eval |
 | 0.6 | 2026-05-10 | Four-tab UI; Knowledge Base & Prompts tab; prompt persistence design |
 | 0.7 | 2026-06-16 | V2 multi-agent orchestration: LangGraph topology, agents package, hybrid router, online judge, multi-agent tracing (§14–15) |
+| 0.8 | 2026-06-16 | V3 knowledge graph layer: Kuzu dual-store, entity_extractor, graph_store, hybrid retrieval in both agents (§17) |

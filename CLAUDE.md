@@ -13,7 +13,7 @@ NEVER deviate from these instructions without explicit user approval.
 1. **Medical Coding** — given encounter documents, produce ICD-10-CM, CPT, and HCPCS codes with citations and documentation gap analysis
 2. **Ambient Note Taking** — given a physician-patient conversation transcript, produce a structured SOAP note and accurate billable code list
 
-**Current phase:** V2 — Multi-agent orchestration (planning approved 2026-06-16): a LangGraph orchestrator routes each query (hybrid heuristic→LLM router, with manual override) to one of two specialized multi-step agents (Medical Coding / Ambient Note Taking), with an online LLM-as-judge scoring every response and nested multi-agent LangFuse tracing. V1 (RAG layer) is complete.
+**Current phase:** V3 — Knowledge Graph Layer (planning approved 2026-06-16): a Kuzu embedded knowledge graph is added alongside ChromaDB so that entities extracted from uploaded documents are indexed at ingest time and used as a second retrieval path (alongside vector similarity) during agent runs. V2 (multi-agent orchestration with LangGraph, hybrid router, online judge) is complete.
 
 ---
 
@@ -33,6 +33,7 @@ NEVER deviate from these instructions without explicit user approval.
 | Observability | LangFuse (cloud free tier) | LLM-native tracing; prompt versioning; LLM-as-judge eval; 50k obs/month free |
 | Evaluation | RAGAS + LLM-as-judge (Claude Sonnet) + deterministic checks | Three-layer hybrid; scores written to LangFuse |
 | Orchestration (V2) | LangGraph | Multi-agent routing + agent subgraphs. User-approved 2026-06-16; scoped to the orchestration layer only (RAG stays hand-built) |
+| Graph Database (V3) | Kuzu (embedded) | Local, no server, persists to data/kuzu/; openCypher query language (same as Neo4j); entity-to-document relationship indexing |
 | Version Control | Git | Standard |
 
 Do NOT suggest or introduce Flask, LangChain, LlamaIndex, or other frameworks unless the user explicitly approves it.
@@ -72,12 +73,14 @@ prj1-medic-agent/
 │       ├── evaluation/        ← eval engine (called by UI Tab 3 AND pytest)
 │       │   ├── __init__.py
 │       │   └── runner.py      ← EvalRunner: run_layer1/2/3/all(); EvalResult dataclass
-│       ├── rag/               ← RAG pipeline (V1)
+│       ├── rag/               ← RAG pipeline (V1) + knowledge graph (V3)
 │       │   ├── __init__.py
 │       │   ├── ingestor.py    ← file loading + chunking
-│       │   ├── embedder.py    ← OpenAI embedding calls
-│       │   ├── store.py       ← ChromaDB persistence operations
-│       │   └── retriever.py   ← query → top-k relevant chunks
+│       │   ├── embedder.py    ← SapBERT embedding calls
+│       │   ├── store.py       ← ChromaDB + Kuzu write path (add/delete)
+│       │   ├── retriever.py   ← retrieve() vector path + graph_retrieve() graph path
+│       │   ├── graph_store.py ← Kuzu schema, node/edge CRUD, entity query (V3)
+│       │   └── entity_extractor.py ← Haiku LLM → JSON entity list per chunk (V3)
 │       └── agents/            ← multi-agent orchestration (V2)
 │           ├── __init__.py
 │           ├── state.py       ← AgentState (LangGraph TypedDict)
@@ -87,9 +90,8 @@ prj1-medic-agent/
 │           ├── judge.py       ← online LLM-as-judge (shared rubric)
 │           └── orchestrator.py    ← builds LangGraph; run() entry point
 ├── data/
-│   └── chroma/                ← ChromaDB on-disk storage (gitignored)
-├── data/
 │   ├── chroma/                ← ChromaDB on-disk storage (gitignored)
+│   ├── kuzu/                  ← Kuzu graph DB on-disk storage (gitignored) (V3)
 │   ├── sessions/              ← JSON session logs for auditability (gitignored)
 │   └── prompts.json           ← user-edited system prompts (gitignored — user-specific)
 ├── tests/
@@ -156,7 +158,7 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 - Do NOT add user authentication. Single user, local only.
 - Do NOT deploy to cloud. Local MacBook only.
 - Do NOT add async/streaming. Keep it synchronous.
-- Do NOT use a relational database. ChromaDB covers all persistence needs.
+- Do NOT use a relational database. ChromaDB (vector) + Kuzu (graph) cover all persistence needs.
 - Do NOT re-embed a document that already exists in the store — always check `document_exists()` first.
 - Do NOT make real API calls in unit tests. Mock all external calls (HuggingFace, Anthropic, ChromaDB, LangFuse).
 - Eval tests (`tests/eval/`) MAY make real LLM calls — they are integration tests, not unit tests. Run them explicitly, not as part of the default `pytest` suite.
@@ -229,6 +231,29 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 
 ---
 
+## V3 Acceptance Criteria — Knowledge Graph Layer
+
+- [ ] `kuzu>=0.6` added to dependencies in `pyproject.toml`
+- [ ] `KUZU_PERSIST_DIR = str(DATA_DIR / "kuzu")` and `ENTITY_EXTRACTOR_MODEL_ID` added to `config/settings.py`
+- [ ] `data/kuzu/` added to `.gitignore`
+- [ ] `rag/graph_store.py` implements: `_get_conn()` (lazy init, singleton), `_init_schema()` (Document + Entity node tables, APPEARS_IN rel table), `upsert_document()`, `upsert_entities()`, `get_related_entities()`, `delete_document_entities()`
+- [ ] `rag/entity_extractor.py` implements: `extract_entities(chunk_text) -> list[dict]` — Haiku LLM call, JSON parse, returns `[]` on parse failure, truncates input to 2000 chars
+- [ ] `rag/store.add_document()` calls `graph_store.upsert_document()` + per-chunk entity extraction + `graph_store.upsert_entities()` after ChromaDB write
+- [ ] `rag/store.delete_document()` calls `graph_store.delete_document_entities()` after ChromaDB delete
+- [ ] `rag/retriever.graph_retrieve(entity_texts)` — Kuzu traversal → synthetic entity context chunk with `source_filename="[knowledge-graph]"`
+- [ ] `agents/coding_agent.retrieve_node` — merges vector chunks + graph chunks; output_summary shows `N vector + M graph chunks`
+- [ ] `agents/ambient_agent.retrieve_node` — extracts entities from transcript inline, merges vector + graph chunks
+- [ ] `tests/rag/test_graph_store.py` — uses real Kuzu in `tmp_path` fixture; covers upsert, query, delete, cross-doc entity sharing
+- [ ] `tests/rag/test_entity_extractor.py` — mocks `complete()`; covers valid JSON, markdown fences, bad JSON, type filtering, truncation
+- [ ] `tests/rag/test_store.py` autouse fixture mocks all graph calls (no test changes for ChromaDB behavior)
+- [ ] `tests/rag/test_retriever.py` covers `graph_retrieve` — output format, grouping, empty short-circuit
+- [ ] `tests/agents/test_coding_agent.py` and `test_ambient_agent.py` mock `graph_retrieve` and `extract_entities`
+- [ ] Full test suite passes: `uv run pytest -v`
+- [ ] Kuzu Explorer works: `uvx kuzu-explorer data/kuzu/` → `localhost:8000` renders entity graph after a document upload
+- [ ] App still runs with: `uv run streamlit run src/medic_agent/ui/app.py`
+
+---
+
 ## Key Decisions Log
 
 | Date | Decision | Reason |
@@ -262,3 +287,9 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 | 2026-06-16 | Manual nested LangFuse spans (not LangChain callback handler) | Keeps V1 populate-then-emit pattern; captures custom router/judge fields |
 | 2026-06-16 | Shared judge/rubric between online judge and eval runner | Single source of truth; no duplication |
 | 2026-06-16 | All prompts editable in Tab 2, grouped by agent | Full transparency and tuning: router, coding (extract/code/verify), ambient (soap/code/verify), and judge (coding/ambient) prompts all surfaced; settings.py holds defaults, data/prompts.json persists edits |
+| 2026-06-16 | V3 = Knowledge Graph (Kuzu + ChromaDB dual-store) | Vector similarity and entity graph traversal answer different questions; neither replaces the other; cross-document entity relationships not capturable by embedding similarity alone |
+| 2026-06-16 | Kuzu (embedded) over Neo4j for graph DB | Neo4j requires a JVM server process; Kuzu is in-process like ChromaDB — matches the "local, no server" constraint; openCypher syntax is portable to Neo4j later |
+| 2026-06-16 | Entity extraction at ingest time (Haiku per chunk) | Front-load cost at upload; query path pays no extra LLM calls for graph retrieval |
+| 2026-06-16 | Entity ID = MD5(text.lower()) | Same entity text across multiple documents maps to one graph node automatically — cross-document linking requires no extra logic |
+| 2026-06-16 | No RELATED_TO edges in V3 | Entity-to-document links (APPEARS_IN) are high-value and simple; relation extraction (drug→condition, procedure→diagnosis) is a V4 extension |
+| 2026-06-16 | graph_retrieve returns synthetic chunk | Uniform interface: agents consume graph context the same way as vector chunks; no special-casing downstream |

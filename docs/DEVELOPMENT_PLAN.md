@@ -1,6 +1,6 @@
 # Development Plan — medic-agent
 
-**Version:** 0.8  
+**Version:** 0.9  
 **Last Updated:** 2026-06-16  
 
 ---
@@ -16,17 +16,18 @@ Never build infrastructure before you have something working that needs it.
 ## Phase Overview
 
 ```
-Phase 0 (V0): Core Loop             ← COMPLETE ✅
-Phase 1 (V1): Context Layer         ← COMPLETE ✅
-Phase 2 (V2): Multi-Agent Orchestr. ← YOU ARE HERE (planning approved)
-Phase 3 (V3): Production-Ready      ← Future
+Phase 0 (V0): Core Loop              ← COMPLETE ✅
+Phase 1 (V1): Context Layer          ← COMPLETE ✅
+Phase 2 (V2): Multi-Agent Orchestr.  ← COMPLETE ✅
+Phase 3 (V3): Knowledge Graph Layer  ← YOU ARE HERE (planning approved 2026-06-16)
+Phase 4 (V4): Production-Ready       ← Future
 ```
 
 > **Phase 2 redefinition (2026-06-16):** V2 was originally scoped as
-> "Multi-Persona" (clinician / admin / patient). It is now redefined as
-> **Multi-Agent Orchestration**: each use case becomes its own multi-step
-> agent, and a hybrid orchestrator routes each query to the right agent
-> automatically (with a manual override). See Phase 2 below.
+> "Multi-Persona" (clinician / admin / patient). It was redefined as
+> **Multi-Agent Orchestration**: each use case became its own multi-step
+> agent with a hybrid orchestrator routing each query automatically.
+> V2 is complete as of 2026-06-16.
 
 ---
 
@@ -263,89 +264,175 @@ New package `src/medic_agent/agents/`:
 - `orchestrator.py` — builds the graph; single entry point `run(query, model_id, override)`
 
 ### Step 2.1 — Dependencies & Scaffolding
-- [ ] `uv add langgraph` (pulls in `langchain-core`)
-- [ ] Create `src/medic_agent/agents/__init__.py` and `tests/agents/__init__.py`
-- [ ] Verify: `uv run python -c "import langgraph; print('OK')"`
+- [x] `uv add langgraph` (pulls in `langchain-core`)
+- [x] Create `src/medic_agent/agents/__init__.py` and `tests/agents/__init__.py`
+- [x] Verify: `uv run python -c "import langgraph; print('OK')"`
 
 ### Step 2.2 — Agent State & Non-Logging LLM Primitive
-- [ ] `agents/state.py`: `AgentState` TypedDict — `query, model_id, override, route, use_case, chunks, scratch (per-step intermediates), response, judge_scores, agent_steps`
-- [ ] `llm/client.py`: add `complete(model_id, system_prompt, user_query, context=None) -> tuple[str, dict]` — returns `(text, token_usage)`, **does not** log a Session (agent nodes call this; the orchestrator logs one Session per query). `ask()` stays unchanged for V0 tests.
-- [ ] Verify: `complete()` returns text + usage without writing to `data/sessions/`
+- [x] `agents/state.py`: `AgentState` TypedDict — `query, model_id, override, route, use_case, chunks, scratch (per-step intermediates), response, judge_scores, agent_steps`
+- [x] `llm/client.py`: add `complete(model_id, system_prompt, user_query, context=None) -> tuple[str, dict]` — returns `(text, token_usage)`, **does not** log a Session (agent nodes call this; the orchestrator logs one Session per query). `ask()` stays unchanged for V0 tests.
+- [x] Verify: `complete()` returns text + usage without writing to `data/sessions/`
 
 ### Step 2.3 — Hybrid Router (`agents/router.py`)
-- [ ] `RouteDecision` dataclass: `{use_case, method, confidence, reasoning}`
-- [ ] `heuristic_route(query) -> RouteDecision | None` — dialogue markers / coding keywords; `None` when ambiguous
-- [ ] `llm_route(query, model_id) -> RouteDecision` — Haiku classifier returning use_case + confidence + reasoning
-- [ ] `route(query, model_id, override) -> RouteDecision` — override → `method="manual"`; else heuristic, then LLM fallback
-- [ ] Add `ROUTER_SYSTEM_PROMPT` to `settings.py`
-- [ ] Tests: heuristic hits both ways, ambiguous → None, mocked LLM fallback, override path
+- [x] `RouteDecision` dataclass: `{use_case, method, confidence, reasoning}`
+- [x] `heuristic_route(query) -> RouteDecision | None` — dialogue markers / coding keywords; `None` when ambiguous
+- [x] `llm_route(query, model_id) -> RouteDecision` — Haiku classifier returning use_case + confidence + reasoning
+- [x] `route(query, model_id, override) -> RouteDecision` — override → `method="manual"`; else heuristic, then LLM fallback
+- [x] Add `ROUTER_SYSTEM_PROMPT` to `settings.py`
+- [x] Tests: heuristic hits both ways, ambiguous → None, mocked LLM fallback, override path
 
 ### Step 2.4 — Coding Agent Subgraph (`agents/coding_agent.py`)
-- [ ] Nodes: `extract` (diagnoses/procedures) → `retrieve` (entity-aware top-5) → `code` (ICD-10/CPT with citations + gaps; uses editable coding prompt) → `verify` (self-check every code is doc-supported; finalize)
-- [ ] Add `CODING_EXTRACT_PROMPT`, `CODING_VERIFY_PROMPT` to `settings.py`
-- [ ] Each node appends a step record to `state["agent_steps"]`
-- [ ] Tests: each node with mocked `complete()` + mocked `retrieve()`
+- [x] Nodes: `extract` (diagnoses/procedures) → `retrieve` (entity-aware top-5) → `code` (ICD-10/CPT with citations + gaps; uses editable coding prompt) → `verify` (self-check every code is doc-supported; finalize)
+- [x] Add `CODING_EXTRACT_PROMPT`, `CODING_VERIFY_PROMPT` to `settings.py`
+- [x] Each node appends a step record to `state["agent_steps"]`
+- [x] Tests: each node with mocked `complete()` + mocked `retrieve()`
 
 ### Step 2.5 — Ambient Agent Subgraph (`agents/ambient_agent.py`)
-- [ ] Nodes: `retrieve` (coding references) → `soap` (draft SOAP from transcript; uses editable ambient prompt) → `code` (billing codes from Assessment) → `verify` (faithfulness/section self-check + documentation flags; finalize)
-- [ ] Add `AMBIENT_CODE_PROMPT`, `AMBIENT_VERIFY_PROMPT` to `settings.py`
-- [ ] Tests: each node with mocked `complete()` + mocked `retrieve()`
+- [x] Nodes: `retrieve` (coding references) → `soap` (draft SOAP from transcript; uses editable ambient prompt) → `code` (billing codes from Assessment) → `verify` (faithfulness/section self-check + documentation flags; finalize)
+- [x] Add `AMBIENT_CODE_PROMPT`, `AMBIENT_VERIFY_PROMPT` to `settings.py`
+- [x] Tests: each node with mocked `complete()` + mocked `retrieve()`
 
 ### Step 2.6 — Online Judge (`agents/judge.py`) + Shared Rubric
-- [ ] Extract Layer-3 judge logic from `evaluation/runner.py` into a shared function (rubric per use case, JSON parsing)
-- [ ] `judge_output(use_case, query, response, chunks, model_id="sonnet") -> dict` — per-dimension + overall + reasoning
-- [ ] `evaluation/runner.py` Layer 3 now calls the shared function (no duplication)
-- [ ] Tests: mocked judge call, JSON parse, both rubrics
+- [x] Extract Layer-3 judge logic from `evaluation/runner.py` into a shared function (rubric per use case, JSON parsing)
+- [x] `judge_output(use_case, response, model_id) -> dict` — per-dimension + overall + reasoning
+- [x] `evaluation/runner.py` Layer 3 now calls the shared function (no duplication)
+- [x] Tests: mocked judge call, JSON parse, both rubrics
 
 ### Step 2.7 — Orchestrator Graph (`agents/orchestrator.py`)
-- [ ] Build `StateGraph`: `router → conditional(use_case) → {coding_agent | ambient_agent} → judge → END`
-- [ ] `run(query, model_id, override="Auto", judge_on=True) -> dict` — returns `{route, response, chunks, judge_scores, agent_steps}`
-- [ ] Populate the enriched `Session` and call `log_session()` once
-- [ ] Tests: routing dispatches to correct agent; manual override respected; judge toggle off skips judge
+- [x] Build `StateGraph`: `router → agent → judge → END`
+- [x] `run(query, model_id, override="Auto", judge_on=True) -> dict` — returns `{route, response, chunks, judge_scores, agent_steps}`
+- [x] Populate the enriched `Session` and call `log_session()` once
+- [x] Tests: routing dispatches to correct agent; manual override respected; judge toggle off skips judge
 
 ### Step 2.8 — Enhanced Multi-Agent Tracing (`observability/tracer.py`)
-- [ ] `Session` new fields: `route_decision: dict`, `agent_steps: list[dict]`, `judge_scores: dict`
-- [ ] Emit nested spans: `router` span, `agent:{use_case}` span containing one span per agent step (generation/retriever), `judge` span; attach judge `overall` as a LangFuse score
-- [ ] Local JSONL captures route_decision + judge_scores for Tab 3
-- [ ] Tests: mocked LangFuse, assert nested structure + judge score attached
+- [x] `Session` new fields: `route_decision: dict`, `agent_steps: list[dict]`, `judge_scores: dict`
+- [x] Emit nested spans: `router` span, `agent:{use_case}` span containing one span per agent step (generation/retriever), `judge` span; attach judge `overall` as a LangFuse score
+- [x] Local JSONL captures route_decision + judge_scores for Tab 3
+- [x] Tests: mocked LangFuse, assert nested structure + judge score attached
 
 ### Step 2.9 — UI Updates (`ui/app.py`)
-- [ ] Sidebar: replace use-case radio with **routing mode** selectbox (`Auto / Medical Coding / Ambient Note Taking`) + judge on/off toggle
-- [ ] Tab 1: single generic input area; on Submit call `orchestrator.run(...)`
-- [ ] **Routing panel** after Submit: *Determined agent · method (heuristic/llm/manual) · confidence · one-line reasoning*
-- [ ] Show response + sources + judge scores inline
-- [ ] **Tab 2: expand to all prompts**, grouped by agent (Router; Coding: extract/code/verify; Ambient: soap/code/verify; Judge: coding/ambient)
-  - [ ] Migrate `data/prompts.json` to nested V2 schema (`router`, `coding.{extract,code,verify}`, `ambient.{soap,code,verify}`, `judge.{coding,ambient}`); missing key → settings.py default
-  - [ ] `_load_prompts` / `_save_prompts` handle the nested schema; Save still bumps version + pushes each prompt to LangFuse
-  - [ ] Reset to Defaults restores all step prompts from settings.py
-- [ ] Tab 3 (Observability): add route decision + judge overall to session rows and summary
-- [ ] Verify: coding flow, ambient flow, a forced override, and editing a step prompt then re-running all work end-to-end
+- [x] Sidebar: replace use-case radio with **routing mode** selectbox (`Auto / Medical Coding / Ambient Note Taking`) + judge on/off toggle
+- [x] Tab 1: single generic input area; on Submit call `orchestrator.run(...)`
+- [x] **Routing panel** after Submit: *Determined agent · method (heuristic/llm/manual) · confidence · one-line reasoning*
+- [x] Show response + sources + judge scores inline
+- [x] **Tab 2: expand to all prompts**, grouped by agent (Router; Coding: extract/code/verify; Ambient: soap/code/verify; Judge: coding/ambient)
+- [x] Tab 3 (Observability): add route decision + judge overall to session rows and summary
+- [x] Verify: coding flow, ambient flow, a forced override, and editing a step prompt then re-running all work end-to-end
 
 ### Step 2.10 — Evaluation Integration
-- [ ] `EvalRunner` runs cases through `orchestrator.run()` (full pipeline under eval)
-- [ ] Layer 1: add **router-accuracy** check (golden cases carry known `use_case`)
-- [ ] Update `golden_cases.json` only if needed; refresh `baseline.json` after a passing run
-- [ ] Verify: `uv run pytest tests/eval/ -v -m eval`
+- [x] `EvalRunner` runs cases through `orchestrator.run()` (full pipeline under eval)
+- [x] Layer 1: add **router-accuracy** check (golden cases carry known `use_case`)
+- [x] Verify: `uv run pytest tests/eval/ -v -m eval`
 
 ### Step 2.11 — Tests & Acceptance
-- [ ] All unit tests pass with `uv run pytest` (external calls mocked)
-- [ ] V2 acceptance criteria in `CLAUDE.md` all checked
+- [x] All unit tests pass with `uv run pytest` (external calls mocked)
+- [x] V2 acceptance criteria in `CLAUDE.md` all checked
+- [x] All steps committed with descriptive messages
+
+**V2 Complete ✅ — 2026-06-16**
+
+---
+
+## Phase 3 — Knowledge Graph Layer (V3)
+
+> Do not begin V3 until V2 is complete and tested. (V2 complete ✅ 2026-06-16)
+
+**Goal:** Add a Kuzu embedded knowledge graph alongside ChromaDB so that entities
+and their cross-document relationships are indexed at ingest time and used as a
+second retrieval path during agent runs.
+
+**Success:** Upload a document → entities are extracted and stored in Kuzu. Submit
+a coding or ambient query → the retrieve step merges vector chunks with entity
+context from the graph. The session log shows `N vector + M graph chunks`. Kuzu
+Explorer (`uvx kuzu-explorer data/kuzu/`) renders the entity graph visually.
+
+### Design Decisions (locked 2026-06-16)
+
+| Decision | Choice | Reason |
+|---|---|---|
+| Graph DB | Kuzu (embedded) | In-process like ChromaDB; openCypher; no server; MIT license |
+| Store strategy | Dual-store (Kuzu + ChromaDB) | Each answers different questions; neither replaces the other |
+| Entity extraction timing | At ingest, Haiku per chunk | Front-load cost at upload; query path pays nothing extra |
+| Entity ID | MD5(text.lower()) | Same entity across docs shares one node → cross-document linking is automatic |
+| Graph schema V3 | Entity-to-Document only (no RELATED_TO edges) | Minimal first pass; relation extraction is a V4 extension |
+
+### Architecture (summary — see ARCHITECTURE.md §17 for full detail)
+
+```
+INGEST:  chunk → ChromaDB (vector)
+                → entity_extractor (Haiku) → graph_store (Kuzu)
+
+RETRIEVE: query → Path A: ChromaDB vector similarity (existing)
+                → Path B: entity_texts → Kuzu traversal (new)
+                → merge A + B → LLM context
+```
+
+New files: `rag/graph_store.py`, `rag/entity_extractor.py`  
+Modified: `rag/store.py`, `rag/retriever.py`, `agents/coding_agent.py`, `agents/ambient_agent.py`
+
+### Step 3.1 — Kuzu Dependency + Config
+- [ ] `uv add kuzu`
+- [ ] Add `KUZU_PERSIST_DIR = str(DATA_DIR / "kuzu")` to `config/settings.py`
+- [ ] Add `ENTITY_EXTRACTOR_MODEL_ID = AVAILABLE_MODELS["Claude Haiku (Fast)"]` to `config/settings.py`
+- [ ] Add `data/kuzu/` to `.gitignore`
+- [ ] Verify: `uv run python -c "import kuzu; print(kuzu.__version__)"`
+
+### Step 3.2 — Graph Store (`rag/graph_store.py`)
+- [ ] Module-level `_db` / `_conn` singletons; lazy init on first call via `_get_conn()`
+- [ ] `_init_schema(conn)` — `CREATE NODE TABLE IF NOT EXISTS` for Document + Entity; `CREATE REL TABLE IF NOT EXISTS` for APPEARS_IN
+- [ ] `upsert_document(doc_id, filename)` — check-then-insert Document node
+- [ ] `upsert_entities(doc_id, entities, chunk_id, chunk_index)` — check-then-insert Entity nodes; create APPEARS_IN edges
+- [ ] `get_related_entities(entity_texts)` — Cypher MATCH returning `{text, entity_type, filename}`
+- [ ] `delete_document_entities(doc_id)` — delete APPEARS_IN edges, prune orphan Entity nodes, delete Document node
+- [ ] Unit tests in `tests/rag/test_graph_store.py` using real Kuzu in `tmp_path` fixture (no mocking of Kuzu itself)
+- [ ] Tests cover: upsert + query, empty input returns empty, delete removes entity, same entity links to two docs, delete one preserves the other
+
+### Step 3.3 — Entity Extractor (`rag/entity_extractor.py`)
+- [ ] `extract_entities(chunk_text: str) -> list[dict]` — Haiku LLM call, JSON parse, returns `[{text, entity_type}]`
+- [ ] Strip markdown fences before JSON parse; return `[]` on any parse failure
+- [ ] Truncate input to 2000 chars before sending (avoids token spikes on large chunks)
+- [ ] `ENTITY_EXTRACTOR_MODEL_ID` used for all calls (not caller-supplied; consistent cost control)
+- [ ] Unit tests in `tests/rag/test_entity_extractor.py` with mocked `complete()` — valid JSON, markdown fences, bad JSON, non-string fields filtered, truncation applied
+
+### Step 3.4 — Wire Graph into `rag/store.py`
+- [ ] `add_document()`: after ChromaDB write, call `graph_store.upsert_document()` then for each chunk: `entity_extractor.extract_entities()` → `graph_store.upsert_entities()`
+- [ ] `delete_document()`: after ChromaDB delete, call `graph_store.delete_document_entities()`
+- [ ] Update `tests/rag/test_store.py` autouse fixture: add `mocker.patch` for `graph_store.upsert_document`, `graph_store.upsert_entities`, `graph_store.delete_document_entities`, `entity_extractor.extract_entities` (returns `[]`)
+- [ ] Verify: all existing store tests still pass
+
+### Step 3.5 — Graph Retrieval Path (`rag/retriever.py`)
+- [ ] `graph_retrieve(entity_texts: list[str]) -> list[dict]` — calls `graph_store.get_related_entities()`, formats results as one synthetic chunk with `source_filename="[knowledge-graph]"` and `chunk_index=-1`
+- [ ] Returns `[]` immediately for empty entity list (no graph call)
+- [ ] Unit tests in `tests/rag/test_retriever.py`: formatted output structure, grouping multiple docs per entity, empty-list short-circuit, no-match returns empty
+
+### Step 3.6 — Hybrid `retrieve_node` in Both Agents
+- [ ] `agents/coding_agent.py`: `retrieve_node` parses entity bullets from `scratch["entities"]` with regex → calls both `retrieve()` and `graph_retrieve()` → concatenates; `output_summary` shows `N vector + M graph chunks`
+- [ ] `agents/ambient_agent.py`: `retrieve_node` calls `extract_entities(state["query"][:2000])` inline → calls both `retrieve()` and `graph_retrieve()` → concatenates
+- [ ] Update `tests/agents/test_coding_agent.py`: add `mocker.patch.object(coding_module, "graph_retrieve", return_value=[])`
+- [ ] Update `tests/agents/test_ambient_agent.py`: add mocks for `graph_retrieve` and `extract_entities`
+- [ ] All agent tests pass
+
+### Step 3.7 — End-to-End Verification
+- [ ] Run full test suite: `uv run pytest -v` — all pass
+- [ ] Run app: `uv run streamlit run src/medic_agent/ui/app.py`
+- [ ] Upload a document in Tab 2 — verify no errors; session log retrieve step shows `N vector + M graph chunks`
+- [ ] Inspect graph: `uvx kuzu-explorer data/kuzu/` → run `MATCH (e:Entity)-[:APPEARS_IN]->(d:Document) RETURN e, d LIMIT 50`
+- [ ] V3 acceptance criteria in `CLAUDE.md` all checked
 - [ ] Commit each step with descriptive messages
 
 ---
 
-## Phase 3 — Production-Ready (V3)
+## Phase 4 — Production-Ready (V4)
 
-> Do not begin V3 until V2 is complete and tested.
+> Do not begin V4 until V3 is complete and tested.
 
 **Goal:** App is deployable, has auth, is shareable.
 
-### Planned Steps (to be detailed when V3 begins)
+### Planned Steps (to be detailed when V4 begins)
 - [ ] Add user authentication
 - [ ] Containerize with Docker
 - [ ] Deploy to cloud (provider TBD)
 - [ ] HIPAA compliance review if real patient data is involved
-- [ ] [PLACEHOLDER]
 
 ---
 
@@ -377,3 +464,4 @@ New package `src/medic_agent/agents/`:
 | 0.6 | 2026-05-10 | Four-tab UI; KB & Prompts tab in Step 1.8; prompt persistence design |
 | 0.7 | 2026-05-10 | V1 marked complete; all Step 1.1–1.10 items checked off |
 | 0.8 | 2026-06-16 | Phase 2 redefined: Multi-Persona → Multi-Agent Orchestration; LangGraph, hybrid router, multi-step agents, online judge; Steps 2.1–2.11 detailed |
+| 0.9 | 2026-06-16 | Phase 2 marked complete; Phase 3 = Knowledge Graph (Kuzu + entity extractor + hybrid retrieval, Steps 3.1–3.7); old Phase 3 → Phase 4 Production-Ready |
