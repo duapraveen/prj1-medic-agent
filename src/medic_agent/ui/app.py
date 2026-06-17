@@ -1,28 +1,23 @@
 import csv
 import io
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
 
+from medic_agent.agents.orchestrator import run as orchestrate
+from medic_agent.config.prompts import PROMPT_DEFAULTS, load_all, save_all
 from medic_agent.config.settings import (
-    AMBIENT_SYSTEM_PROMPT,
     AVAILABLE_MODELS,
-    CODING_SYSTEM_PROMPT,
     DEFAULT_MODEL_NAME,
-    DEFAULT_USE_CASE,
     LANGFUSE_BASE_URL,
     LANGFUSE_PUBLIC_KEY,
-    PROMPTS_FILE,
     SESSIONS_DIR,
-    USE_CASES,
+    USE_CASE_AMBIENT,
+    USE_CASE_CODING,
 )
-from medic_agent.llm.client import ask
-from medic_agent.observability.tracer import Session
 from medic_agent.rag.embedder import embed_texts
 from medic_agent.rag.ingestor import load_pdf, load_text
-from medic_agent.rag.retriever import retrieve
 from medic_agent.rag.store import (
     add_document,
     delete_document,
@@ -365,61 +360,11 @@ def _section_header(title: str, mono_tag: str = "") -> None:
 
 
 # ---------------------------------------------------------------------------
-# Prompt helpers
-# ---------------------------------------------------------------------------
-
-
-def _load_prompts() -> dict:
-    if PROMPTS_FILE.exists():
-        return json.loads(PROMPTS_FILE.read_text())
-    return {
-        "version": 0,
-        "coding": CODING_SYSTEM_PROMPT,
-        "ambient": AMBIENT_SYSTEM_PROMPT,
-    }
-
-
-def _save_prompts(coding: str, ambient: str) -> int:
-    existing = _load_prompts()
-    version = existing.get("version", 0) + 1
-    PROMPTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-    PROMPTS_FILE.write_text(
-        json.dumps(
-            {
-                "version": version,
-                "saved_at": datetime.now(timezone.utc).isoformat(),
-                "coding": coding,
-                "ambient": ambient,
-            },
-            indent=2,
-        )
-    )
-    _push_prompts_to_langfuse(coding, ambient, version)
-    return version
-
-
-def _push_prompts_to_langfuse(coding: str, ambient: str, version: int) -> None:
-    try:
-        from medic_agent.observability.tracer import _LANGFUSE_ENABLED, _langfuse_client
-
-        if not _LANGFUSE_ENABLED or _langfuse_client is None:
-            return
-        _langfuse_client.create_prompt(
-            name="medic-coding-prompt", prompt=coding, labels=["production"]
-        )
-        _langfuse_client.create_prompt(
-            name="medic-ambient-prompt", prompt=ambient, labels=["production"]
-        )
-    except Exception:
-        pass
-
-
-# ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
 
 
-def _render_sidebar() -> tuple[str, str]:
+def _render_sidebar() -> tuple[str, str, bool]:
     st.sidebar.markdown(
         """
 <div style="padding:1.4rem 0 1.8rem">
@@ -429,18 +374,18 @@ def _render_sidebar() -> tuple[str, str]:
   </div>
   <div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;color:#334f70;
               letter-spacing:.18em;text-transform:uppercase;margin-top:6px">
-    Clinical AI &nbsp;·&nbsp; v1
+    Clinical AI &nbsp;·&nbsp; v2
   </div>
 </div>
 """,
         unsafe_allow_html=True,
     )
 
-    use_case = st.sidebar.radio(
-        "Use Case",
-        options=list(USE_CASES.keys()),
-        index=list(USE_CASES.keys()).index(DEFAULT_USE_CASE),
+    routing_mode = st.sidebar.selectbox(
+        "Routing Mode",
+        options=["Auto", USE_CASE_CODING, USE_CASE_AMBIENT],
     )
+    judge_on = st.sidebar.toggle("Score every response (judge)", value=True)
 
     st.sidebar.divider()
 
@@ -457,7 +402,7 @@ def _render_sidebar() -> tuple[str, str]:
         options=list(AVAILABLE_MODELS.keys()),
         index=list(AVAILABLE_MODELS.keys()).index(DEFAULT_MODEL_NAME),
     )
-    return use_case, AVAILABLE_MODELS[model_name]
+    return routing_mode, AVAILABLE_MODELS[model_name], judge_on
 
 
 # ---------------------------------------------------------------------------
@@ -465,81 +410,79 @@ def _render_sidebar() -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
-def _render_agent_tab(use_case: str, model_id: str) -> None:
-    uc = USE_CASES[use_case]
-    prompts = _load_prompts()
-    system_prompt = prompts.get(uc["system_prompt_key"], uc["system_prompt"])
-    prompt_version = f"v{prompts['version']}" if prompts.get("version") else "default"
-
+def _render_routing_panel(route: dict) -> None:
+    if not route:
+        return
+    use_case = route.get("use_case", "?")
+    method = route.get("method", "?")
+    confidence = route.get("confidence", 0)
+    reasoning = route.get("reasoning", "")
     st.markdown(
-        f"""<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:1.1rem">
+        f"""<div style="background:#0c1726;border:1px solid #1c2e48;border-radius:8px;
+padding:.85rem 1.1rem;margin-bottom:1rem">
+  <div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;color:#334f70;
+              letter-spacing:.12em;text-transform:uppercase;margin-bottom:.35rem">
+    Routed to</div>
+  <div style="font-family:'Syne',sans-serif;font-size:1.05rem;font-weight:700;
+              color:#00c8b4">{use_case}</div>
+  <div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:#6888aa;
+              margin-top:.3rem">
+    {method} · confidence {confidence} · {reasoning}</div>
+</div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_agent_tab(routing_mode: str, model_id: str, judge_on: bool) -> None:
+    st.markdown(
+        """<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:1.1rem">
   <div style="font-family:'Syne',sans-serif;font-size:1.35rem;font-weight:700;
-              color:#d8e8f8;letter-spacing:-.02em">{use_case}</div>
+              color:#d8e8f8;letter-spacing:-.02em">Clinical Agent</div>
   <div style="font-family:'JetBrains Mono',monospace;font-size:.62rem;color:#334f70;
               background:#112038;border:1px solid #1c2e48;border-radius:3px;
-              padding:.15em .45em;letter-spacing:.08em">
-    prompt {prompt_version}
-  </div>
+              padding:.15em .45em;letter-spacing:.08em">orchestrated</div>
 </div>""",
         unsafe_allow_html=True,
     )
 
     user_input = st.text_area(
-        uc["input_label"],
-        value=uc["default_query"],
-        placeholder=uc["input_placeholder"],
-        height=160,
+        "Paste encounter documentation or a visit transcript",
+        placeholder=(
+            "Paste clinical documentation to code, OR a physician-patient "
+            "conversation transcript to turn into a SOAP note. The orchestrator "
+            "picks the right agent."
+        ),
+        height=200,
     )
 
     if st.button("Submit", type="primary", disabled=not user_input.strip()):
-        session = Session(
-            use_case=use_case,
-            model_id=model_id,
-            query=user_input,
-            response="",
-            system_prompt_version=prompt_version,
-        )
-        with st.spinner("Retrieving context…"):
-            chunks = retrieve(user_input, k=5)
-            session.chunks_retrieved = chunks
-
-        with st.spinner("Generating response…"):
+        with st.spinner("Routing & running agent…"):
             try:
-                response = ask(
-                    model_id=model_id,
-                    system_prompt=system_prompt,
-                    user_query=user_input,
-                    context=chunks,
-                    session=session,
+                result = orchestrate(
+                    user_input, model_id, override=routing_mode, judge_on=judge_on
                 )
-                st.session_state["last_response"] = response
-                st.session_state["last_chunks"] = chunks
+                st.session_state["last_result"] = result
             except RuntimeError as e:
                 st.error(str(e))
                 return
 
-    if "last_response" in st.session_state:
-        st.markdown("<div style='height:.25rem'></div>", unsafe_allow_html=True)
-        st.markdown(
-            """<div style="display:flex;align-items:center;gap:.5rem;margin-bottom:.6rem">
-  <div style="width:3px;height:18px;background:#00c8b4;border-radius:2px;flex-shrink:0"></div>
-  <span style="font-family:'JetBrains Mono',monospace;font-size:.65rem;color:#6888aa;
-               letter-spacing:.1em;text-transform:uppercase">Response</span>
-</div>""",
-            unsafe_allow_html=True,
-        )
-        st.markdown(st.session_state["last_response"])
+    result = st.session_state.get("last_result")
+    if result:
+        _render_routing_panel(result["route"])
+        st.markdown(result["response"])
 
-        chunks = st.session_state.get("last_chunks", [])
+        chunks = result.get("chunks", [])
         if chunks:
             with st.expander(f"Sources used — {len(chunks)} chunk(s)"):
                 for c in chunks:
-                    st.caption(
-                        f"**{c['source_filename']}** — chunk {c['chunk_index']}"
-                    )
-                    st.text(
-                        c["text"][:300] + ("…" if len(c["text"]) > 300 else "")
-                    )
+                    st.caption(f"**{c['source_filename']}** — chunk {c['chunk_index']}")
+                    st.text(c["text"][:300] + ("…" if len(c["text"]) > 300 else ""))
+
+        scores = result.get("judge_scores") or {}
+        if scores and "error" not in scores:
+            with st.expander("LLM-as-judge scores"):
+                for k, v in scores.items():
+                    st.caption(f"`{k}`: {v}")
 
 
 # ---------------------------------------------------------------------------
@@ -630,44 +573,53 @@ def _render_kb_prompts_section() -> None:
     st.divider()
     _section_header("System Prompts")
 
-    prompts = _load_prompts()
+    prompts = load_all()
     version = prompts.get("version", 0)
-    saved_at = prompts.get("saved_at", "")
     if version:
         st.markdown(
             f"""<div style="font-family:'JetBrains Mono',monospace;font-size:.68rem;
-color:#6888aa;margin-bottom:.85rem">
-  active: <span style="color:#00c8b4">v{version}</span>"""
-            + (
-                f""" &nbsp;·&nbsp; saved {saved_at[:10]}"""
-                if saved_at
-                else ""
-            )
-            + "</div>",
+color:#6888aa;margin-bottom:.85rem">active: <span style="color:#00c8b4">v{version}</span></div>""",
             unsafe_allow_html=True,
         )
 
-    coding_text = st.text_area(
-        "Medical Coding Prompt",
-        value=prompts.get("coding", CODING_SYSTEM_PROMPT),
-        height=280,
-        key="coding_prompt_area",
+    edited = {"router": "", "coding": {}, "ambient": {}, "judge": {}}
+
+    _section_label("Router")
+    edited["router"] = st.text_area(
+        "Router classifier prompt", value=prompts["router"], height=160, key="p_router"
     )
-    ambient_text = st.text_area(
-        "Ambient Note Taking Prompt",
-        value=prompts.get("ambient", AMBIENT_SYSTEM_PROMPT),
-        height=280,
-        key="ambient_prompt_area",
-    )
+
+    _section_label("Medical Coding Agent")
+    for step in ("extract", "code", "verify"):
+        edited["coding"][step] = st.text_area(
+            f"Coding · {step}", value=prompts["coding"][step], height=180, key=f"p_coding_{step}"
+        )
+
+    _section_label("Ambient Note Taking Agent")
+    for step in ("soap", "code", "verify"):
+        edited["ambient"][step] = st.text_area(
+            f"Ambient · {step}", value=prompts["ambient"][step], height=180, key=f"p_ambient_{step}"
+        )
+
+    _section_label("Judge Rubrics")
+    for rubric in ("coding", "ambient"):
+        edited["judge"][rubric] = st.text_area(
+            f"Judge · {rubric}", value=prompts["judge"][rubric], height=160, key=f"p_judge_{rubric}"
+        )
 
     col1, col2 = st.columns(2)
     if col1.button("Save Prompts", type="primary"):
-        new_version = _save_prompts(coding_text, ambient_text)
+        new_version = save_all(edited)
         st.success(f"Prompts saved as **v{new_version}**.")
         st.rerun()
     if col2.button("Reset to Defaults"):
-        st.session_state["coding_prompt_area"] = CODING_SYSTEM_PROMPT
-        st.session_state["ambient_prompt_area"] = AMBIENT_SYSTEM_PROMPT
+        st.session_state["p_router"] = PROMPT_DEFAULTS["router"]
+        for step in ("extract", "code", "verify"):
+            st.session_state[f"p_coding_{step}"] = PROMPT_DEFAULTS["coding"][step]
+        for step in ("soap", "code", "verify"):
+            st.session_state[f"p_ambient_{step}"] = PROMPT_DEFAULTS["ambient"][step]
+        for rubric in ("coding", "ambient"):
+            st.session_state[f"p_judge_{rubric}"] = PROMPT_DEFAULTS["judge"][rubric]
         st.info("Defaults restored. Click **Save Prompts** to persist.")
 
 
@@ -733,6 +685,15 @@ def _render_observability_tab() -> None:
                 f"Tokens: {s.get('token_usage',{}).get('total_tokens','?')}  ·  "
                 f"Prompt: {s.get('system_prompt_version','?')}"
             )
+            route = s.get("route_decision", {})
+            if route:
+                st.caption(
+                    f"Routed: {route.get('use_case','?')} "
+                    f"({route.get('method','?')}, conf {route.get('confidence','?')})"
+                )
+            judge = s.get("judge_scores", {})
+            if judge and "overall" in judge:
+                st.caption(f"Judge overall: {judge['overall']}")
 
     st.divider()
     col1, col2 = st.columns(2)
@@ -1084,13 +1045,13 @@ def main() -> None:
     )
     st.markdown(_STYLES, unsafe_allow_html=True)
 
-    use_case, model_id = _render_sidebar()
+    routing_mode, model_id, judge_on = _render_sidebar()
 
     tab1, tab2, tab3, tab4 = st.tabs(
         ["Agent", "Knowledge Base", "Observability", "Evaluation"]
     )
     with tab1:
-        _render_agent_tab(use_case, model_id)
+        _render_agent_tab(routing_mode, model_id, judge_on)
     with tab2:
         _render_kb_upload_section()
         _render_kb_prompts_section()
