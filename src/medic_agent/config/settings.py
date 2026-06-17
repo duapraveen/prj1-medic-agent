@@ -36,6 +36,7 @@ if not LANGFUSE_PUBLIC_KEY or not LANGFUSE_SECRET_KEY:
 
 DATA_DIR = Path("data")
 CHROMA_PERSIST_DIR = str(DATA_DIR / "chroma")
+KUZU_PERSIST_DIR = str(DATA_DIR / "kuzu")
 SESSIONS_DIR = DATA_DIR / "sessions"
 PROMPTS_FILE = DATA_DIR / "prompts.json"
 
@@ -171,6 +172,7 @@ USE_CASE_CODING = "Medical Coding"
 USE_CASE_AMBIENT = "Ambient Note Taking"
 
 ROUTER_MODEL_ID = AVAILABLE_MODELS["Claude Haiku (Fast)"]
+ENTITY_EXTRACTOR_MODEL_ID = AVAILABLE_MODELS["Claude Haiku (Fast)"]
 JUDGE_MODEL_ID = "claude-sonnet-4-6"
 
 ROUTER_SYSTEM_PROMPT = """\
