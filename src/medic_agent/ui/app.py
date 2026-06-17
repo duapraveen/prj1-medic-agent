@@ -493,7 +493,12 @@ def _render_agent_tab(routing_mode: str, model_id: str, judge_on: bool) -> None:
 def _render_kb_upload_section() -> None:
     _section_header("Knowledge Base")
 
-    uploaded = st.file_uploader("Upload document", type=["pdf", "txt"])
+    if "uploader_key" not in st.session_state:
+        st.session_state["uploader_key"] = 0
+
+    uploaded = st.file_uploader(
+        "Upload document", type=["pdf", "txt"], key=f"uploader_{st.session_state['uploader_key']}"
+    )
 
     if uploaded:
         doc_id = uploaded.name
@@ -513,6 +518,7 @@ def _render_kb_upload_section() -> None:
                 embeddings = embed_texts([c["text"] for c in chunks])
                 add_document(doc_id, chunks, embeddings)
             st.success(f"**{doc_id}** ingested — {len(chunks)} chunks added.")
+            st.session_state["uploader_key"] += 1
             st.rerun()
 
     docs = get_document_info()
