@@ -18,6 +18,7 @@ def test_coding_agent_runs_all_steps_and_produces_response(mocker):
         "retrieve",
         return_value=[{"text": "ctx", "source_filename": "f", "chunk_index": 0}],
     )
+    mocker.patch.object(coding_module, "graph_retrieve", return_value=[])
 
     graph = build_coding_agent()
     out = graph.invoke(

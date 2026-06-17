@@ -14,6 +14,8 @@ def test_ambient_agent_runs_all_steps_and_produces_response(mocker):
         ],
     )
     mocker.patch.object(ambient_module, "retrieve", return_value=[])
+    mocker.patch.object(ambient_module, "extract_entities", return_value=[])
+    mocker.patch.object(ambient_module, "graph_retrieve", return_value=[])
 
     graph = build_ambient_agent()
     out = graph.invoke(

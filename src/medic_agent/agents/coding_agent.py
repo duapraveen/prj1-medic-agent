@@ -1,10 +1,11 @@
+import re
 import time
 
 from langgraph.graph import END, START, StateGraph
 
 from medic_agent.agents.state import AgentState, llm_step
 from medic_agent.config.prompts import get_prompt
-from medic_agent.rag.retriever import retrieve
+from medic_agent.rag.retriever import graph_retrieve, retrieve
 
 
 def extract(state: AgentState) -> dict:
@@ -15,10 +16,20 @@ def extract(state: AgentState) -> dict:
     return {"scratch": scratch, "agent_steps": [step]}
 
 
+def _parse_entity_texts(entities_text: str) -> list[str]:
+    return [
+        m.group(1).strip()
+        for m in re.finditer(r"^[-]\s+(.+)$", entities_text, re.MULTILINE)
+    ]
+
+
 def retrieve_node(state: AgentState) -> dict:
-    entities = state.get("scratch", {}).get("entities", "")
+    entities_text = state.get("scratch", {}).get("entities", "")
     start = time.monotonic()
-    chunks = retrieve(f"{state['query']}\n{entities}", k=5)
+    vector_chunks = retrieve(f"{state['query']}\n{entities_text}", k=5)
+    entity_texts = _parse_entity_texts(entities_text)
+    graph_chunks = graph_retrieve(entity_texts)
+    chunks = vector_chunks + graph_chunks
     step = {
         "name": "retrieval",
         "type": "retriever",
@@ -26,7 +37,7 @@ def retrieve_node(state: AgentState) -> dict:
         "token_usage": {},
         "latency_ms": round((time.monotonic() - start) * 1000, 1),
         "input_summary": state["query"][:200],
-        "output_summary": f"{len(chunks)} chunks",
+        "output_summary": f"{len(vector_chunks)} vector + {len(graph_chunks)} graph chunks",
     }
     return {"chunks": chunks, "agent_steps": [step]}
 

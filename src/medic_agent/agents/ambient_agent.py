@@ -4,12 +4,17 @@ from langgraph.graph import END, START, StateGraph
 
 from medic_agent.agents.state import AgentState, llm_step
 from medic_agent.config.prompts import get_prompt
-from medic_agent.rag.retriever import retrieve
+from medic_agent.rag.entity_extractor import extract_entities
+from medic_agent.rag.retriever import graph_retrieve, retrieve
 
 
 def retrieve_node(state: AgentState) -> dict:
     start = time.monotonic()
-    chunks = retrieve(state["query"], k=5)
+    vector_chunks = retrieve(state["query"], k=5)
+    entities = extract_entities(state["query"][:2000])
+    entity_texts = [e["text"] for e in entities]
+    graph_chunks = graph_retrieve(entity_texts)
+    chunks = vector_chunks + graph_chunks
     step = {
         "name": "retrieval",
         "type": "retriever",
@@ -17,7 +22,7 @@ def retrieve_node(state: AgentState) -> dict:
         "token_usage": {},
         "latency_ms": round((time.monotonic() - start) * 1000, 1),
         "input_summary": state["query"][:200],
-        "output_summary": f"{len(chunks)} chunks",
+        "output_summary": f"{len(vector_chunks)} vector + {len(graph_chunks)} graph chunks",
     }
     return {"chunks": chunks, "agent_steps": [step]}
 
