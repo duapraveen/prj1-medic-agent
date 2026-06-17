@@ -44,6 +44,28 @@ def _build_messages(
     ]
 
 
+def complete(
+    model_id: str,
+    system_prompt: str,
+    user_query: str,
+    context: list[dict] | None = None,
+) -> tuple[str, dict]:
+    messages = _build_messages(system_prompt, user_query, context)
+    response = completion(model=model_id, messages=messages)
+    text = response.choices[0].message.content
+    usage: dict = {}
+    try:
+        u = response.usage
+        usage = {
+            "prompt_tokens": u.prompt_tokens,
+            "completion_tokens": u.completion_tokens,
+            "total_tokens": u.total_tokens,
+        }
+    except Exception:
+        pass
+    return text, usage
+
+
 def ask(
     model_id: str,
     system_prompt: str,
