@@ -135,3 +135,39 @@ def test_send_to_langfuse_warns_on_error(mocker):
 
     with pytest.warns(UserWarning, match="LangFuse trace failed"):
         tracer_module._send_to_langfuse(_make_session())
+
+
+# --- V2 multi-agent nested spans ---
+
+def _make_v2_session(**overrides):
+    s = _make_session(**overrides)
+    s.route_decision = {"use_case": "Medical Coding", "method": "heuristic", "confidence": 0.85}
+    s.agent_steps = [
+        {"name": "router", "type": "span", "model_id": "", "output_summary": "Medical Coding"},
+        {"name": "extract", "type": "generation", "model_id": "haiku", "output_summary": "dx"},
+        {"name": "retrieval", "type": "retriever", "model_id": "", "output_summary": "5 chunks"},
+        {"name": "code", "type": "generation", "model_id": "haiku", "output_summary": "E11.9"},
+        {"name": "verify", "type": "generation", "model_id": "haiku", "output_summary": "final"},
+        {"name": "judge", "type": "generation", "model_id": "sonnet", "output_summary": "{}"},
+    ]
+    s.judge_scores = {"overall": 4.2}
+    return s
+
+
+def test_v2_session_emits_nested_agent_spans(mocker):
+    mock_client = MagicMock()
+    mocker.patch.object(tracer_module, "_langfuse_client", mock_client)
+
+    tracer_module._send_to_langfuse(_make_v2_session())
+
+    # outer(1) + router(1) + agent(1) + 4 agent steps + judge(1) = 8
+    assert mock_client.start_as_current_observation.call_count == 8
+    mock_client.flush.assert_called_once()
+
+
+def test_v1_session_still_emits_three_spans(mocker):
+    mock_client = MagicMock()
+    mocker.patch.object(tracer_module, "_langfuse_client", mock_client)
+
+    tracer_module._send_to_langfuse(_make_session())  # no agent_steps
+    assert mock_client.start_as_current_observation.call_count == 3
