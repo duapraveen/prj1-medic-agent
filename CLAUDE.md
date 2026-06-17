@@ -209,23 +209,23 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 
 ## V2 Acceptance Criteria — Multi-Agent Orchestration
 
-- [ ] User no longer selects the use case; they paste a query and click Submit
-- [ ] A LangGraph orchestrator (`agents/orchestrator.py`) is the single entry point for the Agent tab
-- [ ] Hybrid router picks the agent: heuristics on clear signals, Haiku LLM fallback when ambiguous
-- [ ] Sidebar offers routing mode `Auto / Medical Coding / Ambient Note Taking` (manual override)
-- [ ] After Submit, the UI panel displays the determined agent + method + confidence + one-line reasoning
-- [ ] Coding agent runs multi-step: extract → retrieve → code → verify
-- [ ] Ambient agent runs multi-step: retrieve → soap → code → verify
-- [ ] Each agent node calls `llm.client.complete()` (non-logging); orchestrator logs exactly one Session per query
-- [ ] Online LLM-as-judge (Sonnet) scores every response by default; sidebar toggle can disable it
-- [ ] Judge logic is shared between `agents/judge.py` and `evaluation/runner.py` Layer 3 (no duplication)
-- [ ] LangFuse trace shows nested spans: router → agent:{use_case} → per-step spans → judge, with judge overall as a score
-- [ ] `data/sessions/` JSONL records route_decision + judge_scores; Tab 3 renders them
-- [ ] Tab 2 edits ALL prompts, grouped by agent: router; coding (extract/code/verify); ambient (soap/code/verify); judge (coding/ambient). settings.py holds defaults, data/prompts.json persists edits, each Save pushes versions to LangFuse
-- [ ] `EvalRunner` runs golden cases through the orchestrator; Layer 1 adds a router-accuracy check
-- [ ] All new modules have unit tests with mocked external calls (router, both agents, judge, orchestrator, tracer)
-- [ ] LangGraph runs synchronously (`.invoke()`); no async/streaming introduced
-- [ ] App still runs with: `uv run streamlit run src/medic_agent/ui/app.py`
+- [x] User no longer selects the use case; they paste a query and click Submit
+- [x] A LangGraph orchestrator (`agents/orchestrator.py`) is the single entry point for the Agent tab
+- [x] Hybrid router picks the agent: heuristics on clear signals, Haiku LLM fallback when ambiguous
+- [x] Sidebar offers routing mode `Auto / Medical Coding / Ambient Note Taking` (manual override)
+- [x] After Submit, the UI panel displays the determined agent + method + confidence + one-line reasoning
+- [x] Coding agent runs multi-step: extract → retrieve → code → verify
+- [x] Ambient agent runs multi-step: retrieve → soap → code → verify
+- [x] Each agent node calls `llm.client.complete()` (non-logging); orchestrator logs exactly one Session per query
+- [x] Online LLM-as-judge (Sonnet) scores every response by default; sidebar toggle can disable it
+- [x] Judge logic is shared between `agents/judge.py` and `evaluation/runner.py` Layer 3 (no duplication)
+- [x] LangFuse trace shows nested spans: router → agent:{use_case} → per-step spans → judge, with judge overall as a score (span structure asserted by tracer unit test)
+- [x] `data/sessions/` JSONL records route_decision + judge_scores; Tab 3 renders them
+- [x] Tab 2 edits ALL prompts, grouped by agent: router; coding (extract/code/verify); ambient (soap/code/verify); judge (coding/ambient). settings.py holds defaults, data/prompts.json persists edits, each Save pushes versions to LangFuse
+- [x] `EvalRunner` runs golden cases through the orchestrator; Layer 1 adds a router-accuracy check
+- [x] All new modules have unit tests with mocked external calls (router, both agents, judge, orchestrator, tracer)
+- [x] LangGraph runs synchronously (`.invoke()`); no async/streaming introduced
+- [x] App still runs with: `uv run streamlit run src/medic_agent/ui/app.py`
 
 ---
 
