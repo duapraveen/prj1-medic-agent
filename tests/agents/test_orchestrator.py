@@ -75,3 +75,9 @@ def test_real_graph_dispatches_to_ambient(mocker):
     )
     assert out["use_case"] == USE_CASE_AMBIENT
     assert out["response"] == "SOAP OUT"
+    step_names = [s["name"] for s in out["agent_steps"]]
+    # router appears exactly once (not duplicated by the subgraph reducer)
+    assert step_names.count("router") == 1
+    assert step_names[0] == "router"
+    assert "retrieval" in step_names
+    assert step_names[-1] == "judge"

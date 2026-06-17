@@ -14,12 +14,18 @@ _CODING_AGENT = build_coding_agent()
 _AMBIENT_AGENT = build_ambient_agent()
 
 
+def _sub_input(state: AgentState) -> dict:
+    # Strip parent agent_steps so the subgraph does not return them back and
+    # cause the parent's reducer to concatenate (and duplicate) them.
+    return {k: v for k, v in state.items() if k != "agent_steps"}
+
+
 def _run_coding(state: AgentState) -> dict:
-    return _CODING_AGENT.invoke(state)
+    return _CODING_AGENT.invoke(_sub_input(state))
 
 
 def _run_ambient(state: AgentState) -> dict:
-    return _AMBIENT_AGENT.invoke(state)
+    return _AMBIENT_AGENT.invoke(_sub_input(state))
 
 
 def _router_node(state: AgentState) -> dict:
