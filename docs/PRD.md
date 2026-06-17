@@ -1,9 +1,8 @@
 # Product Requirements Document — medic-agent
 
-**Version:** 0.2  
+**Version:** 0.5  
 **Status:** Active  
-**Last Updated:** 2026-05-09  
-**Author:** [YOUR NAME]  
+**Last Updated:** 2026-06-16  
 
 ---
 
@@ -21,17 +20,17 @@ Both use cases require deep medical ontology grounding (ICD-10, SNOMED CT, CPT, 
 
 ## 2. Target Users
 
-### V0 (Complete)
-- **Primary user:** Developer/PM — testing and validating the core loop
+### V0–V2 (Complete)
+- **Primary user:** Developer/PM — building, testing, and validating the agent
 
-### V1 (Current)
+### V1–V3 (Current — local single user)
 | Persona | Role | Use Case in this App |
 |---|---|---|
-| Medical Coder | Coding specialist, HIM professional | Upload encounter docs → get code suggestions with citations |
-| Physician / APP | Doctor, PA, NP | Paste encounter transcript → get SOAP note + codes |
-| Clinical Documentation Specialist | CDI professional | Review and validate AI-generated SOAP and code suggestions |
+| Medical Coder | Coding specialist, HIM professional | Upload encounter docs → get ICD-10/CPT suggestions with citations and gap flags |
+| Physician / APP | Doctor, PA, NP | Paste encounter transcript → get SOAP note + billing codes |
+| Clinical Documentation Specialist | CDI professional | Review and validate AI-generated SOAP notes and code assignments |
 
-### V2 and Beyond
+### Future (V4+)
 | Persona | Use Case |
 |---|---|
 | RCM Manager | Denial analysis, prior auth prep |
@@ -43,24 +42,32 @@ Both use cases require deep medical ontology grounding (ICD-10, SNOMED CT, CPT, 
 
 ### Use Case 1 — Medical Coding
 
-**Trigger:** User uploads one or more encounter documents (clinical notes, operative reports, discharge summaries, lab results).
+**Trigger:** User uploads one or more encounter documents (clinical notes, operative reports, discharge summaries, lab results), then pastes a query into the Agent tab.
 
-**Flow:**
+**Flow (V2 + V3):**
 ```
-Upload encounter documents
+Upload encounter documents (Tab 2)
         ↓
 Documents ingested → chunked → embedded (SapBERT) → stored in ChromaDB
+                                                    → entities extracted (Haiku LLM)
+                                                    → stored in Kuzu knowledge graph (V3)
         ↓
-User types coding query (or uses default: "What are the appropriate codes for this encounter?")
+User pastes query → clicks Submit
         ↓
-Relevant chunks retrieved from ChromaDB
+Orchestrator router (heuristic or LLM) determines: Medical Coding agent
+UI shows: "Medical Coding · heuristic · 0.95 · Detected ICD/CPT coding keywords"
         ↓
-LLM (coding system prompt) produces:
+Coding agent runs multi-step:
+  extract → retrieve (vector + graph) → code → verify
+        ↓
+LLM (coding prompt) produces:
   - ICD-10-CM diagnosis codes (with sequencing)
   - CPT procedure codes
   - HCPCS codes (if applicable)
   - Citation: which document/section supports each code
   - Documentation gaps: what's missing that would affect coding
+        ↓
+Online LLM-as-judge (Sonnet) scores the response (code_accuracy, completeness, etc.)
 ```
 
 **Output format:**
@@ -83,19 +90,26 @@ DOCUMENTATION GAPS
 
 ### Use Case 2 — Ambient Note Taking
 
-**Trigger:** User pastes a physician-patient conversation transcript into the input field.
+**Trigger:** User pastes a physician-patient conversation transcript into the Agent tab.
 
-**Flow:**
+**Flow (V2 + V3):**
 ```
-User pastes transcript
+User pastes transcript → clicks Submit
         ↓
-(Optional) Relevant coding guidelines retrieved from ChromaDB
+Orchestrator router detects speaker-turn markers (Doctor:/Patient:)
+→ routes to: Ambient Note Taking agent
+UI shows: "Ambient Note Taking · heuristic · 0.90 · Detected multi-turn dialogue"
         ↓
-LLM (ambient system prompt) produces:
-  - Structured SOAP note
+Ambient agent runs multi-step:
+  retrieve (vector + graph entity context) → soap → code → verify
+        ↓
+LLM (ambient prompt) produces:
+  - Structured SOAP note (S/O/A/P)
   - ICD-10-CM codes for all diagnoses in Assessment
-  - CPT codes for procedures mentioned
+  - CPT E&M code based on documented complexity
   - Documentation flags (missing elements for complete SOAP)
+        ↓
+Online LLM-as-judge (Sonnet) scores the response (soap_completeness, faithfulness, etc.)
 ```
 
 **Output format:**
@@ -135,28 +149,37 @@ DOCUMENTATION FLAGS
 
 ## 4. Scope
 
-### V1 — In Scope
-- **Use case selector**: Coding vs. Ambient Note Taking
-- **Document ingestion**: PDF and plain text (.txt)
-- **Persistent vector store**: ChromaDB (upload once, use always)
-- **Medical ontology-aware embeddings**: SapBERT via HuggingFace Inference API
-- **Two specialized system prompts**: one per use case
-- **Retrieval-grounded responses**: top-5 relevant chunks injected as context
-- **Source citation**: every code linked to supporting documentation
-- **Documentation gap identification**: flags missing info
+### Completed (V0–V2)
+- **Core LLM loop**: query → Claude → response; model selector (Haiku / Sonnet / Opus)
+- **Document ingestion**: PDF and plain text (.txt); SapBERT embeddings; ChromaDB vector store
+- **Persistent RAG**: upload once, retrieve always; duplicate detection; delete support
+- **Multi-agent orchestration**: LangGraph orchestrator; hybrid router (heuristic → LLM fallback); manual override
+- **Medical Coding agent**: extract → retrieve → code → verify (4 steps, ICD-10-CM + CPT + gaps)
+- **Ambient Note Taking agent**: retrieve → soap → code → verify (4 steps, SOAP + billing codes + flags)
+- **Online LLM-as-judge**: Sonnet scores every response on use-case-specific rubrics; toggleable
+- **Observability**: LangFuse nested multi-agent traces; local JSONL fallback; Tab 3 session log
+- **Evaluation framework**: 3-layer (deterministic + RAGAS + LLM-as-judge); golden dataset; baseline regression detection
+- **Prompt management**: all 9 agent prompts editable in Tab 2; versioned in LangFuse; persisted in `data/prompts.json`
 
-### V1 — Out of Scope
-- FHIR JSON ingestion (V2)
-- Real-time audio transcription (V2 — user pastes transcript manually)
-- Payer-specific rule engines (V2)
-- Multi-turn conversation / memory (V2)
-- Claim submission or EHR integration (V3)
-- User authentication (V3)
-- Cloud deployment (V3)
+### V3 — In Scope (Current)
+- **Knowledge graph (Kuzu)**: embedded graph DB alongside ChromaDB; no server required
+- **Entity extraction at ingest**: Haiku LLM extracts `{text, entity_type}` from each chunk; stored as nodes with `APPEARS_IN` edges to documents
+- **Hybrid retrieval**: both agents merge vector chunks + graph entity context per query
+- **Cross-document entity linking**: same entity text across documents shares one graph node automatically
+- **Graph inspection**: Kuzu Explorer (`uvx kuzu-explorer data/kuzu/`) for local visual traversal
+
+### Permanent Out of Scope
+- FHIR JSON ingestion — requires specialized extraction logic; deferred
+- Real-time audio transcription — user pastes transcript manually
+- Payer-specific rule engines — too narrow; prompt engineering addresses most cases
+- Multi-turn conversation / memory — single-query model; history is in uploaded docs
+- Claim submission or EHR integration — assistant only; submission is a separate workflow
+- User authentication — single user, local only
+- Cloud deployment — local MacBook only; no real patient data until HIPAA review
 
 ---
 
-## 5. User Experience — V1
+## 5. User Experience — V2 (Current)
 
 ### App Layout — Four Tabs
 
@@ -170,104 +193,105 @@ DOCUMENTATION FLAGS
 
 ### Tab 1 — Agent
 
-Document upload has moved to Tab 2. Sidebar is lean — use case selector and KB status only.
+The user no longer selects a use case. They paste any clinical text and click Submit — the orchestrator determines the agent automatically. A manual override is available in the sidebar for edge cases.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  SIDEBAR                    │  MAIN AREA                    │
 │  ─────────────              │  ────────────────────         │
-│  Use Case:                  │  [Model selector]             │
-│  ○ Medical Coding           │                               │
-│  ○ Ambient Note Taking      │  [Query / Transcript input]   │
+│  Routing Mode:              │  [Model selector dropdown]    │
+│  ○ Auto (recommended)       │                               │
+│  ○ Medical Coding           │  [Query / Transcript input]   │
+│  ○ Ambient Note Taking      │  (any clinical text)          │
 │                             │                               │
-│  Knowledge Base:            │  [Submit button]              │
-│  📄 3 documents (42 chunks) │                               │
-│  → Manage in Tab 2          │  ─────────────────────────    │
+│  ☑ Online Judge (Sonnet)    │  [Submit]                     │
+│                             │                               │
+│  Knowledge Base:            │  ──────────────────────────   │
+│  📄 3 documents (42 chunks) │  ROUTING DECISION             │
+│  → Manage in Tab 2          │  Medical Coding · heuristic   │
+│                             │  Confidence: 0.95             │
+│                             │  "Detected ICD/CPT keywords"  │
+│                             │                               │
+│                             │  ──────────────────────────   │
 │                             │  RESPONSE                     │
-│                             │  (SOAP note or code list)     │
+│                             │  (code list or SOAP note)     │
 │                             │                               │
 │                             │  SOURCES USED                 │
 │                             │  • encounter_note.pdf §3      │
-│                             │  • guidelines_2024.pdf §7     │
+│                             │  • [knowledge-graph] entities │
+│                             │                               │
+│                             │  JUDGE SCORES                 │
+│                             │  code_accuracy: 4.5/5         │
+│                             │  completeness: 4.0/5  ...     │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Use Case Selector Behavior:**
-- **Medical Coding**: query pre-filled with "What are the appropriate codes for this encounter?"
-- **Ambient Note Taking**: input label changes to "Paste encounter transcript here"
-- System prompt switches automatically; active prompt version shown and logged to LangFuse
+**Routing Behavior:**
+- **Auto**: orchestrator classifies the query using heuristics (speaker-turn markers for ambient, coding keywords for coding) and falls back to a Haiku LLM call when ambiguous
+- **Manual override**: forces a specific agent; routing panel shows `method: manual`
+- Routing panel always visible after Submit: agent name, method, confidence score, one-line reasoning
 
 ---
 
-### Tab 2 — Knowledge Base & System Prompts
+### Tab 2 — Knowledge Base & Prompts
 
-**Purpose:** One place to manage all configuration — documents the agent reasons over, and the system prompts that control its behavior.
+**Purpose:** All configuration in one place — uploaded documents and all 9 agent prompts (router + 3 coding + 3 ambient + 2 judge), each editable independently.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  KNOWLEDGE BASE                                              │
-│  ──────────────                                              │
 │  [📎 Upload PDF or TXT file]                                 │
-│                                                              │
 │  Document              Chunks   Uploaded        Action       │
-│  encounter_note.pdf      18     2026-05-10       [🗑 Delete] │
-│  guidelines_2024.pdf     31     2026-05-09       [🗑 Delete] │
-│  formulary_q2.txt         9     2026-05-09       [🗑 Delete] │
-│                                                              │
-│  Total: 3 documents, 58 chunks                               │
+│  encounter_note.pdf      18     2026-06-16       [🗑 Delete] │
+│  guidelines_2024.pdf     31     2026-06-15       [🗑 Delete] │
+│  Total: 2 documents, 49 chunks                               │
 ├──────────────────────────────────────────────────────────────┤
-│  SYSTEM PROMPTS                                              │
-│  ──────────────                                              │
-│  Active prompt version: v3  (saved 2026-05-10 14:22)        │
+│  AGENT PROMPTS              Active version: v5               │
 │                                                              │
-│  ┌─ Medical Coding Prompt ───────────────────────────────┐  │
-│  │ You are a certified medical coding specialist with    │  │
-│  │ expertise in ICD-10-CM, ICD-10-PCS, CPT, and HCPCS.. │  │
-│  │                                                       │  │
-│  │ [editable text area — full prompt visible]            │  │
-│  └───────────────────────────────────────────────────────┘  │
+│  ▸ ROUTER                                                    │
+│    [editable text area]                                      │
 │                                                              │
-│  ┌─ Ambient Note Taking Prompt ──────────────────────────┐  │
-│  │ You are a clinical documentation specialist with      │  │
-│  │ expertise in SOAP note writing and medical coding...  │  │
-│  │                                                       │  │
-│  │ [editable text area — full prompt visible]            │  │
-│  └───────────────────────────────────────────────────────┘  │
+│  ▸ MEDICAL CODING AGENT                                      │
+│    Extract prompt:  [editable text area]                     │
+│    Code prompt:     [editable text area]                     │
+│    Verify prompt:   [editable text area]                     │
+│                                                              │
+│  ▸ AMBIENT NOTE TAKING AGENT                                 │
+│    SOAP prompt:     [editable text area]                     │
+│    Code prompt:     [editable text area]                     │
+│    Verify prompt:   [editable text area]                     │
+│                                                              │
+│  ▸ JUDGE                                                     │
+│    Coding rubric:   [editable text area]                     │
+│    Ambient rubric:  [editable text area]                     │
 │                                                              │
 │  [💾 Save Prompts]          [↩ Reset to Defaults]           │
-│                                                              │
-│  Save → writes to data/prompts.json + pushes new version    │
-│          to LangFuse (all future traces link to this version)│
 └──────────────────────────────────────────────────────────────┘
 ```
 
 **Prompt Save Behavior:**
-- Prompts are saved to `data/prompts.json` (persists across restarts)
-- A new version is pushed to LangFuse so every subsequent trace is linked to it
-- "Reset to Defaults" restores the factory prompts from `config/settings.py` (does not auto-save)
-- Active prompt version number displayed so you always know which version is live
+- All 9 prompts saved together to `data/prompts.json` (persists across restarts)
+- Each save pushes a new version to LangFuse; all subsequent traces link to the new version
+- "Reset to Defaults" restores all prompts from `config/settings.py` defaults (does not auto-save)
 
 ---
 
 ### Tab 3 — Observability
 
-**Purpose:** Visibility into every query session — inputs, outputs, retrieved context, latency, cost. Auditability record.
+**Purpose:** Full visibility into every query — routing decision, agent steps, judge scores, latency, cost. Auditability record.
 
-**How to use:** This tab is passive — just open it. Every query you run in Tab 1 automatically appears here. No user action required.
+**How to use:** Passive — every query in Tab 1 appears here automatically. No user action required.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  SUMMARY BAR                                                 │
-│  Sessions: 42  │  Avg latency: 3.2s  │  Avg cost: $0.003    │
-│  Errors: 1     │  Most used: Coding  │  Tokens today: 84k   │
-├──────────────────────────────────────────────────────────────┤
-│  FILTERS                                                     │
-│  Use case: [All ▼]   Date: [Last 7 days ▼]                  │
+│  Sessions: 42  │  Avg latency: 8.2s  │  Errors: 1           │
+│  Coding: 28    │  Ambient: 14        │  Tokens today: 210k   │
 ├──────────────────────────────────────────────────────────────┤
 │  SESSION LOG TABLE                                           │
-│  Time       │ Use Case │ Model  │ Query (preview) │ ms │ err │
-│  05-10 14:32│ Coding   │ Haiku  │ "What codes..." │1842│     │
-│  05-10 14:28│ Ambient  │ Sonnet │ "Doctor: Good.."│3210│     │
+│  Time    │ Agent   │ Route  │ Judge │ Query preview   │ ms   │
+│  06-16.. │ Coding  │ heur.  │  4.3  │ "code this..."  │8842  │
+│  06-16.. │ Ambient │ llm    │  3.9  │ "Doctor: hi..." │12310 │
 │  ▼ [expand row for full detail]                              │
 ├──────────────────────────────────────────────────────────────┤
 │  [📤 Export CSV]          [🔗 Open in LangFuse →]           │
@@ -275,13 +299,14 @@ Document upload has moved to Tab 2. Sidebar is lean — use case selector and KB
 ```
 
 **Session detail (expandable row):**
-- Full query text
-- Full response text
-- Retrieved chunks with similarity scores
-- System prompt version used
+- Full query text and full response
+- Route decision: method (heuristic/llm/manual), confidence, reasoning
+- Per-step breakdown: each agent step with name, latency, token usage
+- Retrieved chunks (vector + graph) with source attribution
+- Judge scores per dimension + overall
 - Token breakdown (prompt / completion / cached)
 
-**"Open in LangFuse" button** → opens the user's LangFuse project in a browser tab, where waterfall traces and full token-level inspection are available.
+**"Open in LangFuse"** → nested waterfall trace showing router → agent steps → judge spans with timing and token data.
 
 ---
 
@@ -336,15 +361,34 @@ Document upload has moved to Tab 2. Sidebar is lean — use case selector and KB
 - [x] API key management via .env
 - [x] 10 unit tests passing
 
-### V1 Definition of Done
-- [ ] Use case selector (Coding / Ambient) controls system prompt
-- [ ] PDF and TXT documents ingested, embedded with SapBERT, stored in ChromaDB
-- [ ] Documents persist across app restarts
-- [ ] Duplicate upload detection works
-- [ ] Coding response: includes ICD-10-CM + CPT codes with document citations
-- [ ] Ambient response: includes full SOAP note + code list + documentation flags
-- [ ] Response cites source document and chunk for each code
-- [ ] All new modules have unit tests with mocked external calls
+### V1 — Complete ✅ (2026-05-10)
+- [x] PDF and TXT documents ingested, embedded (SapBERT), stored in ChromaDB persistently
+- [x] Duplicate upload detection; delete support
+- [x] Coding response: ICD-10-CM + CPT codes with document citations and gap flags
+- [x] Ambient response: full SOAP note + code list + documentation flags
+- [x] Four-tab UI: Agent, Knowledge Base & Prompts, Observability, Evaluation
+- [x] LangFuse tracing per query; local JSONL fallback
+- [x] Three-layer eval framework (deterministic + RAGAS + LLM-as-judge); golden dataset; baseline
+
+### V2 — Complete ✅ (2026-06-16)
+- [x] Orchestrator routes queries automatically; no use-case selection by user
+- [x] Hybrid router (heuristic → Haiku LLM fallback); manual override available
+- [x] Coding agent: extract → retrieve → code → verify (4-step multi-agent)
+- [x] Ambient agent: retrieve → soap → code → verify (4-step multi-agent)
+- [x] Online LLM-as-judge (Sonnet) scores every response; sidebar toggle
+- [x] Routing panel displayed after Submit: agent, method, confidence, reasoning
+- [x] All 9 prompts editable in Tab 2 grouped by agent; versioned in LangFuse
+- [x] Nested LangFuse spans: router → agent steps → judge; judge score attached to trace
+- [x] Eval runs through orchestrator; Layer 1 adds router-accuracy check
+
+### V3 Definition of Done (Current)
+- [ ] Kuzu knowledge graph indexed alongside ChromaDB at ingest time
+- [ ] Entity extraction (Haiku) runs per chunk at upload; entities stored as nodes
+- [ ] Same entity across documents shares one graph node (cross-document linking)
+- [ ] Both agents use hybrid retrieval: vector chunks + graph entity context
+- [ ] Deleting a document removes its graph nodes and prunes orphaned entities
+- [ ] All new modules have unit tests; existing tests unaffected
+- [ ] Kuzu Explorer works locally for graph inspection after a document upload
 
 ---
 
@@ -359,12 +403,15 @@ Document upload has moved to Tab 2. Sidebar is lean — use case selector and KB
 
 ## 8. Open Questions
 
-| # | Question | Owner | Status |
+| # | Question | Status | Resolution |
 |---|---|---|---|
-| 1 | Should coding output follow a fixed structured format or free-form markdown? | [YOU] | Open |
-| 2 | Should the system surface confidence scores per code? | [YOU] | Open |
-| 3 | Which payer guidelines should be prioritized as reference documents in V1? | [YOU] | Open |
-| 4 | Should SOAP note sections be collapsible in the UI? | [YOU] | Open |
+| 1 | Should coding output follow a fixed structured format or free-form markdown? | Resolved | Fixed format: DIAGNOSIS CODES / PROCEDURE CODES / DOCUMENTATION GAPS sections |
+| 2 | Should the system surface confidence scores per code? | Resolved | No per-code confidence. LLM-as-judge provides overall quality scores (code_accuracy, completeness, etc.) instead |
+| 3 | Which payer guidelines should be prioritized as reference documents? | Open | User uploads their own reference PDFs; no bundled payer guidelines included |
+| 4 | Should SOAP note sections be collapsible in the UI? | Resolved | No — displayed as inline text in the response area; no special rendering |
+| 5 | Should the routing decision be overridable per-query or only via sidebar? | Resolved | Sidebar only (routing mode selectbox); no inline override per query |
+| 6 | Should entity extraction failures block document ingest? | Resolved | No — extraction returns `[]` on parse failure; ChromaDB write always succeeds |
+| 7 | Should RELATED_TO edges between entities be extracted in V3? | Resolved | No — deferred to V4; V3 only indexes Entity-to-Document links (APPEARS_IN) |
 
 ---
 
@@ -376,3 +423,4 @@ Document upload has moved to Tab 2. Sidebar is lean — use case selector and KB
 | 0.2 | 2026-05-09 | Specialized to medical coding + ambient note taking use cases |
 | 0.3 | 2026-05-10 | Three-tab UX: Agent, Observability, Evaluation |
 | 0.4 | 2026-05-10 | Four-tab UX: added Knowledge Base & System Prompts tab; doc upload moved from sidebar |
+| 0.5 | 2026-06-16 | V2 complete: UX updated for orchestrator routing panel, all-prompts Tab 2, judge scores, V2 success criteria; V3 knowledge graph scoped; open questions resolved; scope section rewritten to reflect current state |
