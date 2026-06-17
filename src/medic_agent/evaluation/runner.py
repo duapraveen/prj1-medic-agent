@@ -1,19 +1,21 @@
-import json
 import re
 import warnings
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+from medic_agent.agents.judge import run_judge
+from medic_agent.agents.orchestrator import run as orchestrate
+from medic_agent.agents.router import route
 from medic_agent.config.settings import (
-    AMBIENT_SYSTEM_PROMPT,
-    CODING_SYSTEM_PROMPT,
     DEFAULT_MODEL_ID,
-    PROMPTS_FILE,
+    USE_CASE_AMBIENT,
+    USE_CASE_CODING,
 )
-from medic_agent.llm.client import ask
-from medic_agent.rag.retriever import retrieve
 
-JUDGE_MODEL = "claude-sonnet-4-6"
+EVAL_USE_CASE_MAP = {
+    "medical_coding": USE_CASE_CODING,
+    "ambient_note": USE_CASE_AMBIENT,
+}
 
 # SOAP section detection — matches "SUBJECTIVE", "S — ...", "S:", "S -"
 _SOAP_RE: dict[str, list[str]] = {
@@ -28,6 +30,7 @@ _SOAP_RE: dict[str, list[str]] = {
 class EvalResult:
     case_id: str
     layer1_pass: bool = False
+    router_pass: bool | None = None
     ragas_scores: dict | None = None
     judge_scores: dict | None = None
     timestamp: str = field(
@@ -43,16 +46,6 @@ class EvalResult:
 
 
 class EvalRunner:
-
-    def _load_system_prompt(self, use_case: str) -> str:
-        if PROMPTS_FILE.exists():
-            try:
-                data = json.loads(PROMPTS_FILE.read_text())
-                key = "coding" if use_case == "medical_coding" else "ambient"
-                return data.get(key, "")
-            except Exception:
-                pass
-        return CODING_SYSTEM_PROMPT if use_case == "medical_coding" else AMBIENT_SYSTEM_PROMPT
 
     def _has_soap_section(self, section: str, response: str) -> bool:
         return any(
@@ -120,34 +113,25 @@ class EvalRunner:
         """Returns (scores_dict, raw_llm_response, prompt_sent)."""
         criteria = case.get("judge_criteria", {})
         criteria_text = "\n".join(f"- {k}: {v}" for k, v in criteria.items())
-        prompt = _build_judge_prompt(case["description"], response, criteria_text)
-        try:
-            raw = ask(
-                model_id=JUDGE_MODEL,
-                system_prompt=(
-                    "You are a medical coding evaluation expert. "
-                    "Return only valid JSON with no markdown."
-                ),
-                user_query=prompt,
-            )
-            start, end = raw.find("{"), raw.rfind("}") + 1
-            if start >= 0 and end > start:
-                return json.loads(raw[start:end]), raw, prompt
-        except Exception as e:
-            warnings.warn(f"LLM-as-judge failed for {case['id']}: {e}")
-            return {"error": str(e)}, "", prompt
-        return None, "", prompt
+        return run_judge(case["description"], response, criteria_text)
+
+    def run_router_check(self, case: dict) -> bool:
+        expected = EVAL_USE_CASE_MAP.get(case["use_case"])
+        decision = route(case["input"], override="Auto")
+        return decision.use_case == expected
 
     def run_all(self, cases: list[dict], layers: list[int]) -> list[EvalResult]:
         results = []
         for case in cases:
-            chunks = retrieve(case["input"], k=5)
-            response = ask(
-                model_id=DEFAULT_MODEL_ID,
-                system_prompt=self._load_system_prompt(case["use_case"]),
-                user_query=case["input"],
-                context=chunks or None,
+            display_uc = EVAL_USE_CASE_MAP.get(case["use_case"], USE_CASE_CODING)
+            out = orchestrate(
+                case["input"],
+                DEFAULT_MODEL_ID,
+                override=display_uc,
+                judge_on=False,
             )
+            response = out["response"]
+            chunks = out["chunks"]
             result = EvalResult(
                 case_id=case["id"],
                 case_input=case["input"],
@@ -157,6 +141,7 @@ class EvalRunner:
             )
             if 1 in layers:
                 result.layer1_pass = self.run_layer1(case, response)
+                result.router_pass = self.run_router_check(case)
             if 2 in layers:
                 result.ragas_scores = self.run_layer2(case, response, chunks)
             if 3 in layers:
@@ -165,19 +150,3 @@ class EvalRunner:
                 )
             results.append(result)
         return results
-
-
-def _build_judge_prompt(description: str, response: str, criteria_text: str) -> str:
-    criteria_keys = [
-        line.split(":")[0].lstrip("- ").strip()
-        for line in criteria_text.splitlines()
-        if ":" in line
-    ]
-    schema = "{" + ", ".join(f'"{k}": <1-5>' for k in criteria_keys) + ', "overall": <1.0-5.0>}'
-    return (
-        f"Case: {description}\n\n"
-        f"Evaluation criteria:\n{criteria_text}\n\n"
-        f"Response to evaluate (first 1500 chars):\n{response[:1500]}\n\n"
-        f"Score each criterion 1-5 and provide a weighted overall score 1.0-5.0.\n"
-        f"Return ONLY this JSON (no markdown, no explanation):\n{schema}"
-    )

@@ -48,6 +48,14 @@ def test_eval_results_have_required_fields():
     assert r.timestamp
 
 
+def test_router_picks_correct_agent_for_golden_cases():
+    """The Auto router must classify every golden case to its known use case."""
+    cases = _load_cases()
+    runner = EvalRunner()
+    misses = [c["id"] for c in cases if not runner.run_router_check(c)]
+    assert not misses, f"Router misclassified: {misses}"
+
+
 def test_no_judge_score_regression_vs_baseline():
     """No case's judge overall score may drop >0.5 vs baseline (Layer 3)."""
     if not BASELINE_PATH.exists():
