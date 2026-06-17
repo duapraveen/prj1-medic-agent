@@ -13,7 +13,7 @@ NEVER deviate from these instructions without explicit user approval.
 1. **Medical Coding** — given encounter documents, produce ICD-10-CM, CPT, and HCPCS codes with citations and documentation gap analysis
 2. **Ambient Note Taking** — given a physician-patient conversation transcript, produce a structured SOAP note and accurate billable code list
 
-**Current phase:** V3 — Knowledge Graph Layer (planning approved 2026-06-16): a Kuzu embedded knowledge graph is added alongside ChromaDB so that entities extracted from uploaded documents are indexed at ingest time and used as a second retrieval path (alongside vector similarity) during agent runs. V2 (multi-agent orchestration with LangGraph, hybrid router, online judge) is complete.
+**Current phase:** V3 complete (2026-06-17). V4 not yet planned. V3 — Knowledge Graph Layer: a Kuzu embedded knowledge graph is added alongside ChromaDB so that entities extracted from uploaded documents are indexed at ingest time and used as a second retrieval path (alongside vector similarity) during agent runs. V2 (multi-agent orchestration with LangGraph, hybrid router, online judge) is complete.
 
 ---
 
@@ -231,26 +231,26 @@ Each substantial new feature gets its own subfolder under `src/medic_agent/`.
 
 ---
 
-## V3 Acceptance Criteria — Knowledge Graph Layer
+## V3 Acceptance Criteria — Knowledge Graph Layer ✅ COMPLETE (2026-06-17)
 
-- [ ] `kuzu>=0.6` added to dependencies in `pyproject.toml`
-- [ ] `KUZU_PERSIST_DIR = str(DATA_DIR / "kuzu")` and `ENTITY_EXTRACTOR_MODEL_ID` added to `config/settings.py`
-- [ ] `data/kuzu/` added to `.gitignore`
-- [ ] `rag/graph_store.py` implements: `_get_conn()` (lazy init, singleton), `_init_schema()` (Document + Entity node tables, APPEARS_IN rel table), `upsert_document()`, `upsert_entities()`, `get_related_entities()`, `delete_document_entities()`
-- [ ] `rag/entity_extractor.py` implements: `extract_entities(chunk_text) -> list[dict]` — Haiku LLM call, JSON parse, returns `[]` on parse failure, truncates input to 2000 chars
-- [ ] `rag/store.add_document()` calls `graph_store.upsert_document()` + per-chunk entity extraction + `graph_store.upsert_entities()` after ChromaDB write
-- [ ] `rag/store.delete_document()` calls `graph_store.delete_document_entities()` after ChromaDB delete
-- [ ] `rag/retriever.graph_retrieve(entity_texts)` — Kuzu traversal → synthetic entity context chunk with `source_filename="[knowledge-graph]"`
-- [ ] `agents/coding_agent.retrieve_node` — merges vector chunks + graph chunks; output_summary shows `N vector + M graph chunks`
-- [ ] `agents/ambient_agent.retrieve_node` — extracts entities from transcript inline, merges vector + graph chunks
-- [ ] `tests/rag/test_graph_store.py` — uses real Kuzu in `tmp_path` fixture; covers upsert, query, delete, cross-doc entity sharing
-- [ ] `tests/rag/test_entity_extractor.py` — mocks `complete()`; covers valid JSON, markdown fences, bad JSON, type filtering, truncation
-- [ ] `tests/rag/test_store.py` autouse fixture mocks all graph calls (no test changes for ChromaDB behavior)
-- [ ] `tests/rag/test_retriever.py` covers `graph_retrieve` — output format, grouping, empty short-circuit
-- [ ] `tests/agents/test_coding_agent.py` and `test_ambient_agent.py` mock `graph_retrieve` and `extract_entities`
-- [ ] Full test suite passes: `uv run pytest -v`
-- [ ] Kuzu Explorer works: `uvx kuzu-explorer data/kuzu/` → `localhost:8000` renders entity graph after a document upload
-- [ ] App still runs with: `uv run streamlit run src/medic_agent/ui/app.py`
+- [x] `kuzu>=0.6` added to dependencies in `pyproject.toml`
+- [x] `KUZU_PERSIST_DIR = str(DATA_DIR / "kuzu")` and `ENTITY_EXTRACTOR_MODEL_ID` added to `config/settings.py`
+- [x] `data/kuzu` added to `.gitignore` (covered by `data/` entry)
+- [x] `rag/graph_store.py` implements: `_get_conn()` (lazy init, singleton), `_init_schema()` (Document + Entity node tables, APPEARS_IN rel table), `upsert_document()`, `upsert_entities()`, `get_related_entities()`, `delete_document_entities()`
+- [x] `rag/entity_extractor.py` implements: `extract_entities(chunk_text) -> list[dict]` — Haiku LLM call, JSON parse, returns `[]` on parse failure, truncates input to 2000 chars
+- [x] `rag/store.add_document()` calls `graph_store.upsert_document()` + per-chunk entity extraction + `graph_store.upsert_entities()` after ChromaDB write
+- [x] `rag/store.delete_document()` calls `graph_store.delete_document_entities()` after ChromaDB delete
+- [x] `rag/retriever.graph_retrieve(entity_texts)` — Kuzu traversal → synthetic entity context chunk with `source_filename="[knowledge-graph]"`
+- [x] `agents/coding_agent.retrieve_node` — merges vector chunks + graph chunks; output_summary shows `N vector + M graph chunks`
+- [x] `agents/ambient_agent.retrieve_node` — extracts entities from transcript inline, merges vector + graph chunks
+- [x] `tests/rag/test_graph_store.py` — uses real Kuzu in `tmp_path` fixture; covers upsert, query, delete, cross-doc entity sharing
+- [x] `tests/rag/test_entity_extractor.py` — mocks `complete()`; covers valid JSON, markdown fences, bad JSON, type filtering, truncation
+- [x] `tests/rag/test_store.py` autouse fixture mocks all graph calls (no test changes for ChromaDB behavior)
+- [x] `tests/rag/test_retriever.py` covers `graph_retrieve` — output format, grouping, empty short-circuit
+- [x] `tests/agents/test_coding_agent.py` and `test_ambient_agent.py` mock `graph_retrieve` and `extract_entities`
+- [x] Full test suite passes: `uv run pytest -v`
+- [x] Kuzu Explorer works: `docker run -d -p 8080:8000 -v data:/data -e KUZU_DIR=/data -e KUZU_FILE=kuzu kuzudb/explorer:0.11.3` → `localhost:8080` renders entity graph after a document upload. Note: `data/kuzu` is a file (Kuzu v0.11 single-file format), not a directory.
+- [x] App still runs with: `uv run streamlit run src/medic_agent/ui/app.py`
 
 ---
 
