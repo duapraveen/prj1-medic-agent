@@ -164,3 +164,67 @@ DEFAULT_USE_CASE = "Medical Coding"
 # --- Legacy fallback (used by V0 tests) ---
 
 DEFAULT_SYSTEM_PROMPT = CODING_SYSTEM_PROMPT
+
+# --- V2: Multi-Agent Orchestration ---
+
+USE_CASE_CODING = "Medical Coding"
+USE_CASE_AMBIENT = "Ambient Note Taking"
+
+ROUTER_MODEL_ID = AVAILABLE_MODELS["Claude Haiku (Fast)"]
+JUDGE_MODEL_ID = "claude-sonnet-4-6"
+
+ROUTER_SYSTEM_PROMPT = """\
+You classify a single clinical AI request into exactly one agent.
+- "Ambient Note Taking": the input is a physician-patient conversation transcript \
+to convert into a SOAP note and billing codes.
+- "Medical Coding": the input is clinical documentation (notes, reports, summaries) \
+to assign billing codes for.
+Return ONLY JSON, no markdown:
+{"use_case": "Medical Coding" | "Ambient Note Taking", "confidence": <0.0-1.0>, "reasoning": "<one sentence>"}\
+"""
+
+CODING_EXTRACT_PROMPT = """\
+You are a clinical entity extractor. From the documentation provided, list every \
+explicitly documented diagnosis and procedure as concise bullet points. Extract only \
+what is documented — never infer. Output exactly:
+Diagnoses:
+- <diagnosis>
+Procedures:
+- <procedure>\
+"""
+
+CODING_VERIFY_PROMPT = """\
+You are a medical coding auditor. You are given a DRAFT of assigned codes plus the \
+source documentation context. For every code, confirm the documentation supports it; \
+remove or down-flag any code not supported. Return the final corrected output, keeping \
+the DIAGNOSIS CODES (ICD-10-CM), PROCEDURE CODES (CPT), and DOCUMENTATION GAPS sections.\
+"""
+
+AMBIENT_CODE_PROMPT = """\
+You are a medical coder. Given a SOAP note, assign ICD-10-CM codes for each diagnosis in \
+the Assessment and a CPT E&M code based on the documented complexity. Output ONLY a \
+BILLING CODES section listing each code with a short description.\
+"""
+
+AMBIENT_VERIFY_PROMPT = """\
+You are a clinical documentation auditor. You are given a SOAP note and a billing codes \
+list. Combine them into the final output. Verify the note never fabricates findings beyond \
+the transcript. Output the full SOAP NOTE, then BILLING CODES, then a DOCUMENTATION FLAGS \
+section listing anything missing from a complete note.\
+"""
+
+CODING_JUDGE_PROMPT = """\
+- code_accuracy: Are the suggested codes clinically appropriate for the documentation?
+- code_completeness: Are any important codes missing?
+- citation_quality: Does each code cite supporting documentation?
+- hallucination: Are all codes supported by the documentation? (5 = none unsupported)
+- gap_identification: Did it correctly flag documentation gaps?\
+"""
+
+AMBIENT_JUDGE_PROMPT = """\
+- soap_completeness: Are all four SOAP sections present and appropriately populated?
+- subj_obj_distinction: Patient-reported info in S, clinician-observed in O?
+- code_accuracy: Are ICD/CPT codes clinically appropriate?
+- faithfulness: Does the note stick to the transcript with no fabricated facts?
+- clinical_quality: Would this SOAP be acceptable in a clinical setting?\
+"""
