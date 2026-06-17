@@ -2,6 +2,7 @@ import chromadb
 from datetime import datetime, timezone
 
 from medic_agent.config.settings import CHROMA_PERSIST_DIR
+from medic_agent.rag import entity_extractor, graph_store
 
 COLLECTION_NAME = "medic_documents"
 
@@ -33,6 +34,12 @@ def add_document(doc_id: str, chunks: list[dict], embeddings: list[list[float]])
         for chunk in chunks
     ]
     collection.add(ids=ids, embeddings=embeddings, documents=documents, metadatas=metadatas)
+
+    graph_store.upsert_document(doc_id, doc_id)
+    for chunk in chunks:
+        chunk_id = f"{doc_id}::{chunk['chunk_index']}"
+        entities = entity_extractor.extract_entities(chunk["text"])
+        graph_store.upsert_entities(doc_id, entities, chunk_id, chunk["chunk_index"])
 
 
 def get_document_info() -> list[dict]:
@@ -78,3 +85,4 @@ def list_documents() -> list[str]:
 def delete_document(doc_id: str) -> None:
     collection = _get_collection()
     collection.delete(where={"source_filename": {"$eq": doc_id}})
+    graph_store.delete_document_entities(doc_id)

@@ -27,6 +27,12 @@ def ephemeral_collection(mocker):
         metadata={"hnsw:space": "cosine"},
     )
     mocker.patch.object(store_module, "_get_collection", return_value=collection)
+    mocker.patch("medic_agent.rag.store.graph_store.upsert_document")
+    mocker.patch("medic_agent.rag.store.graph_store.upsert_entities")
+    mocker.patch("medic_agent.rag.store.graph_store.delete_document_entities")
+    mocker.patch(
+        "medic_agent.rag.store.entity_extractor.extract_entities", return_value=[]
+    )
     return collection
 
 
